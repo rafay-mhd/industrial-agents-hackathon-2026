@@ -15,6 +15,8 @@ uv run python -m core.oracle_check data/dev --warmup
 uv run python -m core.check_questions data/test data/test/questions.csv
 # ambiguity behaviour (chat mode): does the agent ask which room when a name exists several times? (~19 questions, cents)
 uv run --frozen --env-file .env python tests/live_ambiguity.py data/train data/dev --out agent_output/livetest/ambiguity.jsonl
+# no-route behaviour (chat mode): on every warm-up question whose answer is 'no route', does the agent say so? (233 questions, ~$4)
+uv run --frozen --env-file .env python tests/live_no_route.py data/train data/dev --out agent_output/livetest/no_route.jsonl
 # live, costs credits: Claude reads the sentence, picks the tool, core computes
 uv run --frozen --env-file .env python -m agent.benchmark data/dev data/dev --no-kind-hints --model claude-sonnet-5-5 --out agent_output/benchmark/dev.csv
 uv run --frozen python -m agent.report agent_output/benchmark/dev.jsonl
@@ -22,6 +24,31 @@ uv run --frozen python -m agent.report agent_output/benchmark/dev.jsonl
 Record: date, commit, model, per-kind answers and extraction, misses with cause, tokens or cost, runtime.
 "Extraction" = the rooms, floors, types and widths Claude passed to the tool matched the dataset's hidden
 `inputs`. Raw logs stay under `agent_output/` (ignored by git); only the summary goes here.
+
+---
+
+## 2026-10-24 — behaviour tests on kit 1.1.0: ambiguity rerun and "no route"
+
+**Commit**: `bfe4d0d` core, chat prompt unchanged. **Model**: `claude-sonnet-5-5`, chat mode. **Run by**: Core owner.
+
+**Ambiguity rerun** (`tests/live_ambiguity.py`, 19 questions whose room name exists several times on the floor):
+18 asked which room was meant, 1 resolved it without asking (both candidates give the same count), 0 guessed.
+Identical to the run on 1.0.0, as expected: neither the prompt nor the name resolver changed. Cost ≈ $0.40.
+
+**No-route test** (`tests/live_no_route.py`, new): every warm-up question whose correct answer is "there is no route".
+Kit 1.1.0 raised their number from 121 to 233, because entrances no longer connect wings of a building:
+
+| Kind               | Questions | "No route" before 1.1.0 | "No route" now |
+|--------------------|-----------|-------------------------|----------------|
+| route              | 720       | 0                       | 60             |
+| route_step_free    | 240       | 63                      | 72             |
+| route_with_closure | 138       | 58                      | 69             |
+| tour               | 240       | 0                       | 32             |
+| Total              | 1,338     | 121                     | 233            |
+
+All 233 went through the chat agent: **233 said there is no route, 0 invented one**, 0 errors. Replies name the
+reason where the data gives one ("the Main staircase is the only connection between the floors", "nothing is closed,
+the map's connections just don't link these rooms"). Cost ≈ $4, 4 workers, about 6 minutes.
 
 ---
 
