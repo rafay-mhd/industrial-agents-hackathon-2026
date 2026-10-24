@@ -484,15 +484,149 @@ export default function App() {
           mockFile = '/mock/chat_closed.json';
         }
       } else if (
-        lower.includes('where') ||
-        lower.includes('find') ||
+        lower.includes('printer') ||
+        lower.includes('coffee') ||
+        lower.includes('toilet') ||
+        lower.includes('restroom') ||
+        lower.includes('bathroom') ||
         lower.includes('cnc') ||
-        lower.includes('mill')
+        lower.includes('mill') ||
+        lower.includes('waterjet')
+      ) {
+        // Smart Nearest Asset Navigation & Highlight
+        let searchTerm = 'printer';
+        if (lower.includes('coffee')) searchTerm = 'coffee';
+        else if (lower.includes('cnc') || lower.includes('mill')) searchTerm = 'cnc';
+        else if (
+          lower.includes('toilet') ||
+          lower.includes('restroom') ||
+          lower.includes('bathroom')
+        )
+          searchTerm = 'toilet';
+        else if (lower.includes('waterjet')) searchTerm = 'waterjet';
+
+        const matchedAsset = data?.assets?.find((a) => {
+          const t = (a.type || '').toLowerCase();
+          const n = (a.name || '').toLowerCase();
+          const c = (a.category || '').toLowerCase();
+          return t.includes(searchTerm) || n.includes(searchTerm) || c.includes(searchTerm);
+        });
+
+        if (matchedAsset) {
+          const assetRoom = data?.spaces?.find((s) => s.id === matchedAsset.space_id);
+          const roomName = assetRoom ? assetRoom.name || assetRoom.ref : 'designated area';
+          const assetFloor = data?.floors?.find((f) => f.id === matchedAsset.floor_id);
+          const floorName = assetFloor ? assetFloor.name : 'Ground floor';
+          const floorLvl = assetFloor ? String(assetFloor.level) : '0';
+
+          const isRouteQuery =
+            lower.includes('route') ||
+            lower.includes('navigate') ||
+            lower.includes('nearest') ||
+            lower.includes('how to get') ||
+            lower.includes('take me') ||
+            lower.includes('way to');
+
+          if (isRouteQuery) {
+            if (matchedAsset.floor_id && selectedFloorId !== matchedAsset.floor_id) {
+              setSelectedFloorId(matchedAsset.floor_id);
+            }
+
+            const startPt: [number, number] = [-7.25, 8.55];
+            const destPt: [number, number] = [
+              matchedAsset.position[0],
+              matchedAsset.position[1],
+            ];
+            const midPt1: [number, number] = [-7.25, (startPt[1] + destPt[1]) / 2];
+            const midPt2: [number, number] = [destPt[0], (startPt[1] + destPt[1]) / 2];
+
+            const dx = destPt[0] - startPt[0];
+            const dy = destPt[1] - startPt[1];
+            const approxDist = Math.max(
+              Math.round(Math.sqrt(dx * dx + dy * dy) * 1.25),
+              18
+            );
+
+            const prettyType = (matchedAsset.type || 'equipment').replace(/_/g, ' ');
+            const res: ChatResponse = {
+              reply: `The nearest ${prettyType} is ${matchedAsset.name} in ${roomName} on ${floorName} (${approxDist} m away). Here is the fastest route to it.`,
+              understood: `Route to nearest ${prettyType}: ${matchedAsset.name} in ${roomName}`,
+              needs_clarification: false,
+              actions: [
+                {
+                  type: 'highlight',
+                  space_ids: assetRoom ? [assetRoom.id] : [],
+                  asset_ids: [matchedAsset.id],
+                },
+                {
+                  type: 'route',
+                  length_m: approxDist,
+                  steps: [
+                    `Start in Production zone H-A1 on ${floorName}.`,
+                    `Follow the central aisle toward ${roomName}.`,
+                    `Enter ${roomName} through the doorway.`,
+                    `Arrive at ${matchedAsset.name}.`,
+                  ],
+                  floors: {
+                    [floorLvl]: [startPt, midPt1, midPt2, destPt],
+                  },
+                },
+              ],
+            };
+
+            const agentMsg: ChatMessage = {
+              id: `agent-${Date.now()}`,
+              sender: 'agent',
+              text: res.reply,
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              response: res,
+            };
+            setMessages((prev) => [...prev, agentMsg]);
+            if (res.understood) setRouteUnderstood(res.understood);
+            applyActions(res.actions);
+            speakText(res.reply);
+            return;
+          } else {
+            // Locate / Highlight without route
+            if (matchedAsset.floor_id && selectedFloorId !== matchedAsset.floor_id) {
+              setSelectedFloorId(matchedAsset.floor_id);
+            }
+            const prettyType = (matchedAsset.type || 'equipment').replace(/_/g, ' ');
+            const res: ChatResponse = {
+              reply: `${matchedAsset.name} (${prettyType}) is located in ${roomName} on ${floorName}. I have highlighted it on the map for you.`,
+              understood: `Locating ${matchedAsset.name} in ${roomName}`,
+              needs_clarification: false,
+              actions: [
+                {
+                  type: 'highlight',
+                  space_ids: assetRoom ? [assetRoom.id] : [],
+                  asset_ids: [matchedAsset.id],
+                },
+              ],
+            };
+            const agentMsg: ChatMessage = {
+              id: `agent-${Date.now()}`,
+              sender: 'agent',
+              text: res.reply,
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              response: res,
+            };
+            setMessages((prev) => [...prev, agentMsg]);
+            if (res.understood) setRouteUnderstood(res.understood);
+            applyActions(res.actions);
+            speakText(res.reply);
+            return;
+          }
+        }
+        mockFile = '/mock/chat_highlight.json';
+      } else if (
+        lower.includes('where') ||
+        lower.includes('find')
       ) {
         mockFile = '/mock/chat_highlight.json';
       } else if (lower.includes('door') || lower.includes('add') || lower.includes('wall')) {
         mockFile = '/mock/chat_door_added.json';
-      } else if (lower.includes('?') || lower.includes('office') || lower.includes('printer')) {
+      } else if (lower.includes('?') || lower.includes('office')) {
         mockFile = '/mock/chat_clarify.json';
       }
 
