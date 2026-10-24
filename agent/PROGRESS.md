@@ -2,12 +2,12 @@
 
 Source of milestones: `TEAM_PLAN.md`, section 5.2.
 
-**Current status:** step 1 complete; step 2 next.
+**Current status:** step 2 implementation ready; live baseline pending Anthropic credentials.
 **Checklist progress:** 1 / 12 steps = 8.3%.
 This is milestone completion, not measured agent accuracy or a time estimate.
 
 - [x] 1. Repository setup and dependencies
-- [ ] 2. Answer entry point and small live baseline
+- [ ] 2. Answer entry point and small live baseline (code and offline checks ready; live check pending)
 - [ ] 3. Parallel benchmark runner
 - [ ] 4. Tool wrappers for Core methods
 - [ ] 5. Benchmark prompt and first accurate question type
@@ -44,12 +44,34 @@ Within the restricted coding environment, uv checks use
 `UV_CACHE_DIR=/tmp/industrial-agents-uv-cache` to keep cache writes in an allowed directory.
 The starter import check also uses `MPLCONFIGDIR=/tmp/industrial-agents-matplotlib`.
 
-## Next: step 2
+## Step 2 implementation and offline evidence
 
-Implement `agent.answer:answer` with a fresh BuildingAgent per question and a shared API client.
-Before the live two-question baseline, activate the supplied Anthropic credits and configure
-`ANTHROPIC_API_KEY` in local `.env`. Do not paste the key into chat or commit it.
+- Implemented `agent.answer:answer`, wrapping the unchanged starter BuildingAgent.
+- Each call loads a fresh BuildingMap and creates a fresh conversation and unique output directory
+  under `agent_output/answers/`. Closures, edits, conversation history, and artifacts cannot leak
+  from one question into another through shared agent state.
+- The Anthropic client is initialized lazily and shared, with initialization protected by a lock.
+- The adapter reads only the supplied building and question text, not answer keys or oracle inputs.
+- Three offline tests pass: question isolation, error propagation, and invalid-building handling
+  before client creation. Command: `uv run python -m unittest discover -s agent/tests -v`.
+- The official evaluator successfully loads `agent.answer:answer` without API credentials.
+- Its seeded two-question sample selects `proc-factory-dev-003-H02` and `swiss-5097-H02`.
+- Core's oracle was attempted again and remains unavailable (`No module named 'core'`).
+- No live responses, accuracy score, or Claude spending have been measured yet.
+
+## Next: finish step 2 live verification
+
+Activate the supplied Anthropic credits and configure `ANTHROPIC_API_KEY` in local `.env`.
+Do not paste the key into chat or commit it. Then run:
+
+```bash
+uv run --env-file .env python -m benchmark.evaluate data/dev \
+  --kinds floor_area_total --per-kind 2 --agent agent.answer:answer
+```
+
+Inspect both real responses in `agent_output/benchmark/results.jsonl` before marking step 2 complete.
 The starter's area-question accuracy is expected to be low until Core's area tools are integrated.
+Next milestone after that: step 3, the parallel benchmark runner.
 
 ## Integration points to keep visible
 
