@@ -2,8 +2,8 @@
 
 Source of milestones: `TEAM_PLAN.md`, section 5.2.
 
-**Current status:** step 9 complete; step 10 next.
-**Checklist progress:** 9 / 12 steps = 75%.
+**Current status:** step 10 server complete; step 11 next. Real Builder hookup and joint UI browser verification remain pending integration dependencies.
+**Checklist progress:** 10 / 12 steps = 83.3%.
 This is milestone completion, not measured agent accuracy or a time estimate.
 
 - [x] 1. Repository setup and dependencies
@@ -15,7 +15,7 @@ This is milestone completion, not measured agent accuracy or a time estimate.
 - [x] 7. Integrate remaining question types and compare models
 - [x] 8. Full dev evaluation and test submission v1
 - [x] 9. BENCHMARK.md and clean-checkout rehearsal
-- [ ] 10. HTTP server, UI actions, and Builder tool integration
+- [x] 10. HTTP server, UI actions, and tested Builder hook (real Builder pending)
 - [ ] 11. Conversation behavior and tricky-user checks
 - [ ] 12. Submission v2, voice endpoint, and final rehearsal
 
@@ -403,11 +403,64 @@ uv run --frozen --env-file .env python -m benchmark.evaluate data/dev \
 - **14 live question runs** this step; the 369 warm-up cases used no API credits. Exact account spending
   is not asserted. Step 8's full live dev score remains **138/138**.
 
-## Next: step 10
+## Step 10: HTTP API and UI actions (2026-10-24)
 
-Implement the FastAPI server for the UI: building listing/data, per-session chat state and actions
-derived from actual tools. Integrate Builder's tool when available and verify a real chat request returns
-route geometry matching the shared API contract.
+- Fetched teammate branches. `origin/main` still points to `ba29088`; no new Core changes to merge.
+  Inspected `origin/ui` at `938cfa9`: request/response types match TEAM_PLAN.md §4.3.
+  `origin/buildersim` currently contains no Builder implementation.
+- Added `agent/server.py` with `GET /buildings`, `GET /buildings/{id}` and
+  `POST /buildings/{id}/chat`. The catalog loads all 280 supplied buildings without question files.
+  Pydantic validates requests; CORS permits the agreed `http://localhost:5173` origin.
+- Each `(building_id, session_id)` owns a fresh Building and chat agent, with a lock serializing
+  turns in that session. Different sessions run concurrently. UUID artifact paths do not use user IDs.
+  State is in memory, limited to 256 sessions; the local demo uses one server worker.
+- Added `agent/chat_tools.py`: action capture at successful tool execution, using the actual result.
+  Routes capture geometry immediately, searches supply highlight IDs, closure actions contain the whole
+  current closed set, and door actions contain the actual new opening. No actions are model-generated
+  JSON, replayed tool calls, or stale previous-turn state.
+- The server splits first-line `Understood:` / `Clarification:` markers into the response fields.
+  Full conversation refinement remains step 11. Failed turns restore in-memory map/history and discard
+  pending generated-building registrations. API errors return safe 429/502/500 responses.
+- Added an optional `AGENT_BUILDER=module:function` integration hook for the agreed Builder signature.
+  It accepts existing approved image paths, loads returned buildings through Core, checks matching/new
+  IDs and publishes successful builds to the catalog with `building_created`. Without a configured
+  real Builder callable the tool is not advertised. A controlled Builder fixture verifies the hook;
+  **real Builder generation and upload/UI integration remain pending teammate delivery**.
+- All **48 offline tests pass**: actual Core tool actions, multiple route snapshots, closures/reopening,
+  door edits, rollback after model errors, request/CORS checks, same/different session concurrency,
+  isolation across buildings, capacity, Builder publication and restricted image paths.
+
+Live verification:
+
+```bash
+uv run --frozen --env-file .env uvicorn agent.server:app --host 127.0.0.1 --port 8010
+```
+
+- Port 8000 was occupied by an existing process; it was left untouched. Our test instance uses 8010.
+  The UI currently targets 8000, so **joint browser-to-API verification is still pending port alignment**.
+- Both GET endpoints passed; returned factory JSON exactly matches the source building.
+- The plan's generic main-entrance/CNC request correctly returned clarification: this building has
+  four entrances and no named main entrance. A same-session follow-up selected Warehouse zone H-C2,
+  CNC mill H-A1-A and step-free travel. The returned route is **46.1 m**, with geometry and directions
+  exactly matching Core's independently computed route.
+- A subsequent request closed the actual Office lift (`proc-factory-dev-003-V02`). A separate session
+  confirmed no lifts closed. A thank-you in the original session remembered its closure and returned
+  no stale actions. Live CORS preflight returned the exact allowed UI origin.
+- Five successful live chat turns; saved replies are in ignored `agent_output/server/`.
+  These are real API/Core integration checks, not a claim that the browser UI or Builder was exercised.
+- Added `agent/SERVER.md` with commands, state/action semantics, Builder wiring and UI follow-ups.
+  The remote UI currently substitutes mock answers on API failures and lacks a `building_created`
+  dispatcher case; both are flagged for the Interface owner, without editing their files.
+- Required Core oracle remains **138/138**. Benchmark runtime/prompt/tool behavior and v1 submission
+  are unchanged; the existing full live benchmark score remains 138/138 from step 8.
+- Confirmed with the user that **ElevenLabs text-to-speech (`POST /tts`) is step 12**. It is not
+  implemented in this step. The UI already attempts this endpoint and currently falls back to browser speech.
+
+## Next: step 11
+
+Refine and verify conversation behavior: precise clarification, remembered position/accessibility,
+closure-aware replanning, persistent edits and tricky requests. Carry forward real Builder and joint
+UI integration checks as teammate code becomes available; step 12 adds ElevenLabs and final rehearsal.
 
 ## Integration points to keep visible
 
