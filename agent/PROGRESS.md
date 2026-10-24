@@ -2,8 +2,8 @@
 
 Source of milestones: `TEAM_PLAN.md`, section 5.2.
 
-**Current status:** step 7 complete; step 8 next.
-**Checklist progress:** 7 / 12 steps = 58.3%.
+**Current status:** step 8 complete; step 9 next.
+**Checklist progress:** 8 / 12 steps = 66.7%.
 This is milestone completion, not measured agent accuracy or a time estimate.
 
 - [x] 1. Repository setup and dependencies
@@ -13,7 +13,7 @@ This is milestone completion, not measured agent accuracy or a time estimate.
 - [x] 5. Benchmark prompt and first accurate question type
 - [x] 6. Scoreboard and failure diagnostics
 - [x] 7. Integrate remaining question types and compare models
-- [ ] 8. Full dev evaluation and test submission v1
+- [x] 8. Full dev evaluation and test submission v1
 - [ ] 9. BENCHMARK.md and clean-checkout rehearsal
 - [ ] 10. HTTP server, UI actions, and Builder tool integration
 - [ ] 11. Conversation behavior and tricky-user checks
@@ -311,10 +311,60 @@ uv run python -m agent.report agent_output/benchmark/step7_sonnet_kinds.jsonl
 - Full local results and traces remain under ignored `agent_output/`. Commands, counts and the
   selection decision are preserved here for the team.
 
-## Next: step 8
+## Step 8: full dev evaluation and Team Simran submission v1 (2026-10-24)
 
-Run the selected model on all 138 dev questions, inspect failures, and generate test submission v1
-for all 145 test questions. Validate the submission's IDs, rows and Answer lines before committing it.
+- Ran the selected Sonnet model on **all 138 dev questions** without kind hints: **138/138 (100%)**,
+  above the >=85% milestone target. The report also verified **138/138 correct extraction checks**.
+- Every dev question used one attempt and one task tool; no execution/scoring errors. All replies
+  were single Answer lines, matched their CSV/JSONL/trace records, and came from the requested Sonnet model.
+- No agent, prompt or Core changes were needed. Evaluation used implementation commit `9873d57`.
+
+| Dev kind | Correct |
+| --- | --- |
+| errand | 19/19 |
+| floor_area_total | 31/31 |
+| largest_room | 20/20 |
+| room_stacked | 9/9 |
+| shared_walls_count | 24/24 |
+| step_free_reachable_count | 1/1 |
+| straight_line_3d | 13/13 |
+| what_if_door | 2/2 |
+| wide_delivery_count | 19/19 |
+| **Total** | **138/138** |
+
+Commands used:
+
+```bash
+uv run --env-file .env python -m agent.benchmark data/dev data/dev \
+  --no-kind-hints --model claude-sonnet-5-5 --out agent_output/benchmark/step8_dev.csv
+uv run python -m agent.report agent_output/benchmark/step8_dev.jsonl
+uv run --env-file .env python -m agent.benchmark data/test data/test/questions.csv \
+  --no-kind-hints --model claude-sonnet-5-5 --out agent_output/benchmark/step8_test.csv
+uv run python -m agent.report agent_output/benchmark/step8_test.jsonl
+```
+
+- The user confirmed the team name **Team Simran**. Saved the validated test CSV to
+  **`submissions/team_simran_v1.csv`** with LF line endings for version control; verified all parsed
+  rows match the original generated CSV exactly. This is the local v1 artifact; it has not
+  been uploaded to the organizers or pushed to a remote.
+- Test generation returned **145/145 nonempty replies**, one attempt and one task tool per question,
+  no execution errors and no unavailable answers. Actual response models all matched Sonnet 5.5.
+- Validated UTF-8, exact `question_id,answer` header, 145 unique IDs matching the official template,
+  no missing/extra rows, exactly 146 physical lines, and exactly 145 plain Answer lines.
+- The CSV is **5,631 bytes**, below the 5 MB limit. CSV replies match JSONL and per-attempt traces.
+  Numeric answers have one finite nonnegative number; counts are integers. Room labels and numeric
+  values match the recorded successful task-tool outputs, allowing only rounding to two decimals.
+- Test inputs contain no reference answers or oracle arguments, so **test accuracy and extraction
+  accuracy are unknown**. Output consistency and format checks are not a test-set correctness score.
+- Required pre-commit Core oracle remains **138/138**. No Core, starter, benchmark or data edits.
+- **283 live question runs** this step (138 dev + 145 test), without retries. Full diagnostics, token
+  usage and validation summaries are saved locally under ignored `agent_output/benchmark/step8_*`.
+  Provider token usage was captured; exact account spending is not asserted.
+
+## Next: step 9
+
+Write BENCHMARK.md with prerequisites, exact commands, outputs and expected runtime. Verify the
+single-building command from a clean temporary clone using the locked dependencies.
 
 ## Integration points to keep visible
 
