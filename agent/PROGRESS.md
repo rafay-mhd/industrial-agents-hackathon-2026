@@ -2,8 +2,8 @@
 
 Source of milestones: `TEAM_PLAN.md`, section 5.2.
 
-**Current status:** step 8 complete; step 9 next.
-**Checklist progress:** 8 / 12 steps = 66.7%.
+**Current status:** step 9 complete; step 10 next.
+**Checklist progress:** 9 / 12 steps = 75%.
 This is milestone completion, not measured agent accuracy or a time estimate.
 
 - [x] 1. Repository setup and dependencies
@@ -14,7 +14,7 @@ This is milestone completion, not measured agent accuracy or a time estimate.
 - [x] 6. Scoreboard and failure diagnostics
 - [x] 7. Integrate remaining question types and compare models
 - [x] 8. Full dev evaluation and test submission v1
-- [ ] 9. BENCHMARK.md and clean-checkout rehearsal
+- [x] 9. BENCHMARK.md and clean-checkout rehearsal
 - [ ] 10. HTTP server, UI actions, and Builder tool integration
 - [ ] 11. Conversation behavior and tricky-user checks
 - [ ] 12. Submission v2, voice endpoint, and final rehearsal
@@ -361,10 +361,53 @@ uv run python -m agent.report agent_output/benchmark/step8_test.jsonl
   usage and validation summaries are saved locally under ignored `agent_output/benchmark/step8_*`.
   Provider token usage was captured; exact account spending is not asserted.
 
-## Next: step 9
+## Step 9: runbook and clean-checkout rehearsal (2026-10-24)
 
-Write BENCHMARK.md with prerequisites, exact commands, outputs and expected runtime. Verify the
-single-building command from a clean temporary clone using the locked dependencies.
+- Added `BENCHMARK.md`: prerequisites, credential setup, locked installation, exact single-building
+  and full-split commands, CSV/JSONL/traces, score interpretation, model selection, retry behavior,
+  submission validation, official/team checks, and the future Sunday building procedure.
+- Clarified that train/dev have answer keys, test does not, and no hidden/unreleased judge tests
+  are available locally. The submission comes from live agent answers, not model training.
+- Ran the organizers' free warm-up oracle: **369/369** (100 locate, 40 count, 120 route,
+  40 step-free route, 29 closure route, 40 tour). This tests direct starter tools, not LLM interpretation:
+
+```bash
+uv run --frozen python -m starter_agent.evaluate data/dev --oracle
+```
+
+- Created a clean local Git clone of committed `agent` at **`821292a`** using `git clone --no-local`.
+  The runtime code came entirely from Git; no source files or original virtual environment were copied.
+  This verifies the current unpublished local branch, not a download of the older remote branch.
+- Clone location: `/private/tmp/team-simran-step9-1h1n28yw/repo`. It began with a clean working tree,
+  no `.venv` and no `.env`. `uv sync --frozen` created its own Python 3.12.13 environment and installed
+  all 37 packages successfully in **2.45 seconds**. Import checks confirmed `agent`, `core` and the
+  interpreter came from the clone.
+- Copied only the local credential file with owner-only permissions for the live checks and removed
+  it in a `finally` cleanup. No key contents were printed or retained in copied diagnostics.
+- The exact documented factory command passed **5/5**, with **5/5 extraction checks**, in **8.67 seconds**.
+  The report ran successfully in 0.11 seconds. CSV replies matched JSONL and trace records.
+- Also ran our agent through the organizers' unchanged official harness from that same clean clone:
+
+```bash
+uv run --frozen --env-file .env python -m benchmark.evaluate data/dev \
+  --agent agent.answer:answer --per-kind 1 --name official_smoke
+```
+
+- Official harness: **9/9**, one question per benchmark kind, **24.65 seconds**. Independently re-scored
+  all saved replies and verified their actual traces used Sonnet 5.5. The clone's working tree stayed clean.
+- Preserved factory/official results, all 14 live traces and timing measurements under ignored
+  `agent_output/step9_clean_clone/`. The temporary clone contains no `.env` after verification.
+- These observed runtimes are machine/provider/cache dependent; the runbook includes extra time for
+  downloads, latency and retries. Four workers are the default for our runner; the official runner is sequential.
+- Required Core dev oracle remains **138/138**. No runtime implementation, data or v1 submission changes.
+- **14 live question runs** this step; the 369 warm-up cases used no API credits. Exact account spending
+  is not asserted. Step 8's full live dev score remains **138/138**.
+
+## Next: step 10
+
+Implement the FastAPI server for the UI: building listing/data, per-session chat state and actions
+derived from actual tools. Integrate Builder's tool when available and verify a real chat request returns
+route geometry matching the shared API contract.
 
 ## Integration points to keep visible
 
