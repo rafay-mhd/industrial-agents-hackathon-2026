@@ -352,6 +352,8 @@ hundreds of known answers in `data/train` and `data/dev`, with no API calls and 
 
 ### 5.2 Agent — "question in, Answer line out; and the conversation"
 
+**Read `docs/agent_plan.md` first: it summarises what the core provides, how to wrap it as tools, and which of the steps below each core function belongs to.**
+
 **Your goal**: a Claude agent that answers the 145 test questions in the exact scored format, runs on any
 building with one command, talks well in a chat, and is reachable by the UI over HTTP. You also merge.
 
