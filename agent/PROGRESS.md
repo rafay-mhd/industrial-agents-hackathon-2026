@@ -2,8 +2,8 @@
 
 Source of milestones: `TEAM_PLAN.md`, section 5.2.
 
-**Current status:** step 10 server complete; step 11 next. Real Builder hookup and joint UI browser verification remain pending integration dependencies.
-**Checklist progress:** 10 / 12 steps = 83.3%.
+**Current status:** step 11 complete; step 12 next. Real Builder hookup and joint UI browser verification remain pending integration dependencies.
+**Checklist progress:** 11 / 12 steps = 91.7%.
 This is milestone completion, not measured agent accuracy or a time estimate.
 
 - [x] 1. Repository setup and dependencies
@@ -16,7 +16,7 @@ This is milestone completion, not measured agent accuracy or a time estimate.
 - [x] 8. Full dev evaluation and test submission v1
 - [x] 9. BENCHMARK.md and clean-checkout rehearsal
 - [x] 10. HTTP server, UI actions, and tested Builder hook (real Builder pending)
-- [ ] 11. Conversation behavior and tricky-user checks
+- [x] 11. Conversation behavior and tricky-user checks
 - [ ] 12. Submission v2, voice endpoint, and final rehearsal
 
 After step 12, follow the Sunday release/submission run-book in TEAM_PLAN.md section 6.
@@ -456,11 +456,41 @@ uv run --frozen --env-file .env uvicorn agent.server:app --host 127.0.0.1 --port
 - Confirmed with the user that **ElevenLabs text-to-speech (`POST /tts`) is step 12**. It is not
   implemented in this step. The UI already attempts this endpoint and currently falls back to browser speech.
 
-## Next: step 11
+## Step 11: conversational behavior (2026-10-24)
 
-Refine and verify conversation behavior: precise clarification, remembered position/accessibility,
-closure-aware replanning, persistent edits and tricky requests. Carry forward real Builder and joint
-UI integration checks as teammate code becomes available; step 12 adds ElevenLabs and final rehearsal.
+- Replaced the starter chat prompt with explicit clarification, location/constraint memory, destination
+  replacement, grounded directions, closure/reopening and persistent-edit instructions.
+- Added session context and `remember_context`. Confirmed position changes only through an explicit
+  memory call; route planning does not advance it. Chat routing tools enforce remembered step-free
+  requirements. Failed HTTP turns roll back context alongside the map and conversation.
+- Multi-stop routes return Core-computed leg distances and one complete UI route; internal leg
+  calculations no longer leave the UI showing only the final leg. Door edits report actual before/after
+  distances between the edited rooms. Closures/edits invalidate stale server route state/actions.
+- UI directions strip internal references while preserving human labels. Documented the Interface
+  follow-up to clear a previously displayed route on a closure/edit with no replacement route.
+- Added `agent.interactions`, a CLI that drives the real server handler with live Claude calls, plus
+  reproducible fixtures adapted from Interface's ten tricky-user scenarios. Expectations remain in
+  the test harness, never in model messages. Full evidence: `docs/interaction_log.md`.
+- Matching baseline: **12/15** checks passed. First revision: **15/15**. Manual review found extra
+  clarification and unsupported indoor-connectivity claims; tightened the prompt. Final revision:
+  **17/17**, including two additional turns testing a remembered wheelchair need for nearest amenities.
+- Confirmed final stored positions/accessibility against Core. These are team regression checks,
+  not the official interaction score or proof of perfect behavior on arbitrary questions.
+- All **56 offline tests pass**; required Core oracle **138/138**. The benchmark prompt is byte-for-byte
+  unchanged and benchmark mode still uses the original Core wrappers. No new full live benchmark run
+  was needed here; step 8's live dev score remains **138/138**, to be rerun in step 12.
+- Restarted only our port-8010 verification server. Two live HTTP turns routed Warehouse zone H-C2
+  to Office 1.20 (**151.1 m**, step-free), then changed the destination to Kitchen 0.28 (**53.87 m**)
+  without repeating the start or wheelchair requirement. Both geometry/direction payloads match Core.
+- **49 live chat turns** across baseline, revisions and HTTP smoke checks. Exact account spending is
+  not asserted. Local transcripts are ignored under `agent_output/interactions/`; source fixtures and
+  the summarized evidence are committed. Source data, Core, starter, official evaluator and v1 CSV unchanged.
+
+## Next: step 12
+
+Add ElevenLabs text-to-speech (`POST /tts`), rerun dev, generate Team Simran submission v2, and repeat
+the clean-clone rehearsal. Carry forward real Builder hookup and joint browser/UI checks as teammate
+code becomes available. Finishing the checklist does not guarantee perfection on unseen questions.
 
 ## Integration points to keep visible
 

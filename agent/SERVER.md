@@ -43,7 +43,11 @@ Verified: a 46.1 m route with complete ground-floor coordinates and Core's direc
 
 ## State and actions
 
-Each `(building_id, session_id)` owns a fresh Core Building and chat history. Calls in the same
+Each `(building_id, session_id)` owns a fresh Core Building, chat history, confirmed position and
+step-free preference. `remember_context` records explicit starts/arrivals and mobility needs;
+planning a route does not move the user. Remembered step-free requirements are enforced by the
+chat tool layer for routes, nearest amenities, errands, exit distances and reachability.
+Calls in the same
 session are serialized; different sessions can proceed concurrently. Session IDs are opaque and
 never used as file paths. The demo limits active sessions to 256 and returns 503 at capacity.
 No authentication or durable session store is included in this local demo server.
@@ -52,7 +56,7 @@ Actions come from successful real tool calls in the current turn:
 
 | Tool | Action |
 | --- | --- |
-| `find_route` | `route`: length, directions and geometry captured immediately for that route |
+| `find_route` | `route`: length, human-readable directions and geometry captured immediately for the complete route |
 | `search_building` | `highlight`: returned space/asset IDs and the assets' containing spaces |
 | `set_closed` | `closed`: the **complete current closed-ID set**, including an empty list after reopening |
 | `add_door` | `door_added`: the actual new opening |
@@ -62,10 +66,17 @@ The UI should replace its closure set and apply door edits locally. The raw buil
 unchanged by a session's closures/doors; these changes do not affect other sessions or source data.
 No action is reconstructed by replaying a tool or reading model-written JSON. A later turn cannot
 reuse an old turn's actions. Route geometry is captured before later tool calls can change `last_route`.
+Multi-stop route results include Core-computed leg distances while retaining the complete route action.
+Door edits return before/after walking distances between the edited rooms. A closure or door edit
+invalidates earlier route actions in the same turn and clears the server's cached route. The UI must
+also clear any previously displayed route on those actions; a subsequent `route` action supplies the
+replacement. This matters when a closure leaves no accessible alternative.
 
 The server asks the chat model to use `Understood:` or `Clarification:` as the first response line;
-it removes that marker and fills the corresponding response fields. Chat refinement remains step 11.
-On failed turns, in-memory edits/history and pending catalog registrations are rolled back. Generated
+it removes that marker and fills the corresponding response fields. The chat prompt asks one necessary
+clarification at a time and uses grounded names and directions. Internal references are retained for
+tool calculations but stripped from the directions displayed by the UI.
+On failed turns, in-memory edits/history/context and pending catalog registrations are rolled back. Generated
 artifact files may remain locally, but the API does not serve those files. Provider rate limits return
 429, other provider failures return 502, and unexpected failures return 500 with a generic message.
 There is no automatic replay of state-changing chat requests.
@@ -96,6 +107,9 @@ successful Builder call; restart persistence needs a configured data location co
   show the actual error and a retry option rather than presenting a mock as a live result.
 - The remote UI's action dispatcher handles route/highlight/closed/door actions, but does not yet handle
   `building_created`; it should refresh the building list and open the returned building when Builder lands.
+- Clear a previous route when processing `closed` or `door_added`, then apply any later route action.
+  The fetched UI currently keeps old route geometry after a closure; a blocked-lift answer must not
+  leave the earlier lift route highlighted. No new action type is required.
 - `POST /tts` is intentionally scheduled for step 12 with **ElevenLabs text-to-speech**. The UI already
   attempts that endpoint and falls back to browser speech. Microphone speech recognition is a separate UI feature.
 
@@ -111,3 +125,15 @@ CORS, route/highlight actions, successive route snapshots, closures/reopening, d
 per-building/per-session isolation, concurrency, capacity, Builder registration and path restrictions.
 Live HTTP checks exercise Claude → tools → response and compare route geometry directly with Core.
 Responses are saved locally under ignored `agent_output/server/`.
+
+Step 11 adds 17 live conversational regression turns, eight offline context/action tests, and a
+two-turn real HTTP check of remembered start/accessibility. Reproduce the conversation checks with:
+
+```bash
+uv run --frozen --env-file .env python -m agent.interactions \
+  --out agent_output/interactions/new_run.jsonl
+```
+
+This invokes the actual HTTP handler through ASGI with live Claude calls and spends API credits.
+The output must be a new file. See [the interaction log](../docs/interaction_log.md) for before/after
+results, fixture adaptation, manual review and limits. These are team checks, not an official score.

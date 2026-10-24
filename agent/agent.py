@@ -13,6 +13,8 @@ from starter_agent.agent import MAX_TOKENS, MAX_TOOL_ITERATIONS, EFFORT, FALLBAC
 
 from agent.tools import make_tools
 from agent.prompts import BENCHMARK_PROMPT, CHAT_PROMPT
+from agent.context import ConversationContext
+from agent.chat_tools import chat_tools
 
 # Step 7: equal 24/24 dev comparison accuracy at lower published token prices.
 DEFAULT_MODEL = "claude-sonnet-5-5"
@@ -31,7 +33,10 @@ class BuildingAgent(StarterBuildingAgent):
         self.mode = mode
         self.model = model or os.environ.get("AGENT_MODEL") or DEFAULT_MODEL
         self.responses: list[dict] = []
-        self.tools = make_tools(building_map, output_directory)
+        self.context = ConversationContext()
+        self.actions: list[dict] = []
+        self.tools = (chat_tools(building_map, output_directory, self.actions, context=self.context)
+                      if mode == 'chat' else make_tools(building_map, output_directory))
         prompt = BENCHMARK_PROMPT if mode == "benchmark" else CHAT_PROMPT
         self.system = [{
             "type": "text",
@@ -42,10 +47,14 @@ class BuildingAgent(StarterBuildingAgent):
     def ask(self, user_text: str) -> str:
         """Keep model selection local; benchmark comparisons must not silently fall back."""
         self.messages.append({"role": "user", "content": user_text})
+        system = list(self.system)
+        if self.mode == 'chat' and (self.context.position is not None or self.context.step_free):
+            system.append({'type': 'text', 'text': 'Remembered user-confirmed context (a planned route does not move the user): '
+                           + json.dumps(vars(self.context))})
         fallback = {"betas": [FALLBACK_BETA], "fallbacks": "default"} if self.mode == "chat" else {}
         runner = self.client.beta.messages.tool_runner(
             model=self.model, max_tokens=MAX_TOKENS, max_iterations=MAX_TOOL_ITERATIONS,
-            system=self.system, tools=self.tools, messages=list(self.messages),
+            system=system, tools=self.tools, messages=list(self.messages),
             output_config={"effort": EFFORT}, **fallback,
         )
         final = None

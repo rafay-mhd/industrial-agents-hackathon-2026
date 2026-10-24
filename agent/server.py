@@ -22,14 +22,6 @@ from core import Building
 
 ROOT = Path(__file__).resolve().parents[1]
 log = logging.getLogger(__name__)
-HTTP_INSTRUCTIONS = '''
-Response format for this chat interface:
-Start the final response with one plain line: Understood: <brief interpretation>.
-If essential information is missing or ambiguous, instead start with Clarification: and ask one
-short question. Do not make edits or route to a guessed destination while awaiting clarification.
-Then give the user-facing answer. Do not output JSON or invent UI actions. Tools supply map actions.
-Do not call show_route to draw images; find_route already supplies geometry to the interface.
-'''
 
 
 class ChatRequest(BaseModel):
@@ -125,7 +117,7 @@ def create_app(data_root: Path | None = None, output_root: Path | None = None,
 
     def configure(session, register):
         session.agent.tools = chat_tools(session.agent.map, session.output, session.actions,
-                                         build_function, register, upload_root)
+                                         build_function, register, upload_root, session.agent.context)
 
     def get_session(identifier, session_id):
         key = (identifier, session_id)
@@ -136,7 +128,6 @@ def create_app(data_root: Path | None = None, output_root: Path | None = None,
                     raise HTTPException(503, 'Session capacity reached; restart the demo server to reset sessions.')
                 output = output_root / uuid4().hex
                 agent = BuildingAgent(Building(data), output, client=client_factory(), mode='chat')
-                agent.system[0]['text'] += HTTP_INSTRUCTIONS
                 sessions[key] = Session(agent, output)
             return sessions[key]
 
@@ -155,7 +146,7 @@ def create_app(data_root: Path | None = None, output_root: Path | None = None,
             with session.lock:
                 agent = session.agent
                 snapshot = (deepcopy(agent.map.data), set(agent.map.closed), deepcopy(agent.map.last_route),
-                            len(agent.messages), dict(agent.usage), len(agent.responses))
+                            len(agent.messages), dict(agent.usage), len(agent.responses), deepcopy(agent.context))
                 pending = []
                 session.actions.clear()
 
@@ -184,11 +175,12 @@ def create_app(data_root: Path | None = None, output_root: Path | None = None,
                     return ChatResponse(reply=reply, understood=understood,
                                         needs_clarification=clarification, actions=deepcopy(session.actions))
                 except Exception:
-                    data, closed, route, message_count, usage, response_count = snapshot
+                    data, closed, route, message_count, usage, response_count, context = snapshot
                     agent.map = Building(data)
                     agent.map.closed, agent.map.last_route = closed, route
                     del agent.messages[message_count:]
                     agent.usage = usage
+                    agent.context = context
                     del agent.responses[response_count:]
                     session.actions.clear()
                     raise
