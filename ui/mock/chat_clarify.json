@@ -1,0 +1,6 @@
+{
+  "reply": "I found multiple matching rooms: Office 1.11, Office 1.12, and Office 1.14 on Floor 1. Could you clarify which room you would like directions to?",
+  "understood": null,
+  "needs_clarification": true,
+  "actions": []
+}

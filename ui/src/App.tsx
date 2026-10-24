@@ -1,5 +1,14 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
-import type { BuildingData, Space, Opening, Asset, RouteAction, ChatResponse } from './types';
+import type {
+  BuildingData,
+  Space,
+  Opening,
+  Asset,
+  RouteAction,
+  ChatResponse,
+  ChatMessage,
+  ChatAction,
+} from './types';
 import { parseFootprint } from './types';
 import './App.css';
 
@@ -92,6 +101,46 @@ const PRESET_BUILDINGS: PresetBuilding[] = [
   },
 ];
 
+interface MockOption {
+  id: string;
+  label: string;
+  file: string;
+  prompt: string;
+}
+
+const MOCK_OPTIONS: MockOption[] = [
+  {
+    id: 'chat_route',
+    label: 'Route: H-A1 → Office 1.11',
+    file: '/mock/chat_route.json',
+    prompt: 'Route from Production zone H-A1 to Office 1.11',
+  },
+  {
+    id: 'chat_clarify',
+    label: 'Clarification Needed',
+    file: '/mock/chat_clarify.json',
+    prompt: 'Where is the office?',
+  },
+  {
+    id: 'chat_closed',
+    label: 'Close Staircase 0.17',
+    file: '/mock/chat_closed.json',
+    prompt: 'Staircase 0.17 is closed for maintenance',
+  },
+  {
+    id: 'chat_highlight',
+    label: 'Highlight CNC Mill',
+    file: '/mock/chat_highlight.json',
+    prompt: 'Where is CNC mill H-A1-A?',
+  },
+  {
+    id: 'chat_door_added',
+    label: 'Add Door H-A2 ↔ 0.20',
+    file: '/mock/chat_door_added.json',
+    prompt: 'Add a door between Assembly zone H-A2 and Hall access 0.20',
+  },
+];
+
 type HoveredEntity =
   | { kind: 'space'; space: Space; area: number }
   | { kind: 'asset'; asset: Asset; dimensions?: string }
@@ -124,6 +173,25 @@ export default function App() {
   const [routeUnderstood, setRouteUnderstood] = useState<string | null>(null);
   const [showRoutePanel, setShowRoutePanel] = useState<boolean>(true);
 
+  // Action States (Step 6)
+  const [highlightedSpaceIds, setHighlightedSpaceIds] = useState<Set<string>>(new Set());
+  const [highlightedAssetIds, setHighlightedAssetIds] = useState<Set<string>>(new Set());
+  const [closedElementIds, setClosedElementIds] = useState<Set<string>>(new Set());
+  const [addedDoors, setAddedDoors] = useState<Opening[]>([]);
+
+  // Chat Panel State (Step 6)
+  const [chatMinimized, setChatMinimized] = useState(false);
+  const [inputQuery, setInputQuery] = useState('');
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    {
+      id: 'msg-init',
+      sender: 'agent',
+      text: 'Hello! I am your indoor assistant. Ask me for routes, room locations, or building closures.',
+      timestamp: '12:00',
+    },
+  ]);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
   // Pan and Zoom State
   const [zoom, setZoom] = useState(1.0);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -139,24 +207,112 @@ export default function App() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Load Route Mock from /mock/chat_route.json
-  const loadRouteMock = useCallback(() => {
-    fetch('/mock/chat_route.json')
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to load route mock`);
-        return res.json();
-      })
-      .then((res: ChatResponse) => {
-        const routeAction = res.actions.find((a): a is RouteAction => a.type === 'route');
-        if (routeAction) {
-          setActiveRoute(routeAction);
-          setRouteUnderstood(res.understood);
-          setShowRoute(true);
-          setShowRoutePanel(true);
+  // Auto-scroll chat to latest message
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  // Execute chat actions in UI
+  const applyActions = useCallback((actions: ChatAction[]) => {
+    for (const act of actions) {
+      if (act.type === 'route') {
+        setActiveRoute(act);
+        setShowRoute(true);
+        setShowRoutePanel(true);
+      } else if (act.type === 'highlight') {
+        if (act.space_ids && act.space_ids.length > 0) {
+          setHighlightedSpaceIds(new Set(act.space_ids));
         }
-      })
-      .catch((err) => console.error('Error loading mock route:', err));
+        if (act.asset_ids && act.asset_ids.length > 0) {
+          setHighlightedAssetIds(new Set(act.asset_ids));
+        }
+      } else if (act.type === 'closed') {
+        setClosedElementIds(new Set(act.element_ids));
+      } else if (act.type === 'door_added') {
+        setAddedDoors((prev) => [...prev, act.opening]);
+      }
+    }
   }, []);
+
+  // Pick a mock response from dropdown or quick chips
+  const handleSelectMock = useCallback(
+    (mockId: string) => {
+      const opt = MOCK_OPTIONS.find((m) => m.id === mockId);
+      if (!opt) return;
+
+      fetch(opt.file)
+        .then((res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to load mock`);
+          return res.json();
+        })
+        .then((res: ChatResponse) => {
+          const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          const userMsg: ChatMessage = {
+            id: `user-${Date.now()}`,
+            sender: 'user',
+            text: opt.prompt,
+            timestamp: time,
+          };
+          const agentMsg: ChatMessage = {
+            id: `agent-${Date.now()}`,
+            sender: 'agent',
+            text: res.reply,
+            timestamp: time,
+            response: res,
+          };
+          setMessages((prev) => [...prev, userMsg, agentMsg]);
+          if (res.understood) setRouteUnderstood(res.understood);
+          applyActions(res.actions);
+        })
+        .catch((err) => console.error('Error applying mock:', err));
+    },
+    [applyActions]
+  );
+
+  // Send message on Enter or click
+  const handleSendMessage = useCallback(() => {
+    if (!inputQuery.trim()) return;
+    const text = inputQuery.trim();
+    setInputQuery('');
+
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const userMsg: ChatMessage = {
+      id: `user-${Date.now()}`,
+      sender: 'user',
+      text,
+      timestamp: time,
+    };
+    setMessages((prev) => [...prev, userMsg]);
+
+    // Choose appropriate mock based on query keywords
+    const lower = text.toLowerCase();
+    let mockFile = '/mock/chat_route.json';
+    if (lower.includes('close') || lower.includes('shut') || lower.includes('repair')) {
+      mockFile = '/mock/chat_closed.json';
+    } else if (lower.includes('where') || lower.includes('find') || lower.includes('cnc') || lower.includes('mill')) {
+      mockFile = '/mock/chat_highlight.json';
+    } else if (lower.includes('door') || lower.includes('add') || lower.includes('wall')) {
+      mockFile = '/mock/chat_door_added.json';
+    } else if (lower.includes('?') || lower.includes('office') || lower.includes('printer')) {
+      mockFile = '/mock/chat_clarify.json';
+    }
+
+    fetch(mockFile)
+      .then((res) => res.json())
+      .then((res: ChatResponse) => {
+        const agentMsg: ChatMessage = {
+          id: `agent-${Date.now()}`,
+          sender: 'agent',
+          text: res.reply,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          response: res,
+        };
+        setMessages((prev) => [...prev, agentMsg]);
+        if (res.understood) setRouteUnderstood(res.understood);
+        applyActions(res.actions);
+      })
+      .catch((err) => console.error('Error in chat response:', err));
+  }, [inputQuery, applyActions]);
 
   // Load building by ID or URL
   const loadBuilding = useCallback(
@@ -185,11 +341,15 @@ export default function App() {
           }
           setZoom(1.0);
           setPan({ x: 0, y: 0 });
+          setHighlightedSpaceIds(new Set());
+          setHighlightedAssetIds(new Set());
+          setClosedElementIds(new Set());
+          setAddedDoors([]);
           setLoading(false);
 
-          // If loading factory, auto-load mock route for Step 5
+          // If factory, trigger initial route demo
           if (buildingId === 'proc-factory-dev-003') {
-            loadRouteMock();
+            handleSelectMock('chat_route');
           } else {
             setActiveRoute(null);
           }
@@ -199,7 +359,7 @@ export default function App() {
           setLoading(false);
         });
     },
-    [loadRouteMock]
+    [handleSelectMock]
   );
 
   // Initial load
@@ -232,6 +392,10 @@ export default function App() {
         setZoom(1.0);
         setPan({ x: 0, y: 0 });
         setActiveRoute(null);
+        setHighlightedSpaceIds(new Set());
+        setHighlightedAssetIds(new Set());
+        setClosedElementIds(new Set());
+        setAddedDoors([]);
         setLoading(false);
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
@@ -290,6 +454,12 @@ export default function App() {
     }
     return { doors: d, entrances: e };
   }, [currentOpenings]);
+
+  // Added doors on current floor
+  const currentAddedDoors = useMemo(() => {
+    if (!currentFloor) return [];
+    return addedDoors.filter((d) => d.floor_id === currentFloor.id);
+  }, [addedDoors, currentFloor]);
 
   // Assets on current floor
   const currentAssets = useMemo(() => {
@@ -638,7 +808,7 @@ export default function App() {
           </div>
           <div className="stats-pill">
             <span>Doors:</span>
-            <strong>{doors.length}</strong>
+            <strong>{doors.length + currentAddedDoors.length}</strong>
           </div>
           <div className="stats-pill">
             <span>Assets:</span>
@@ -668,7 +838,7 @@ export default function App() {
             className={`layer-toggle-btn ${showDoors ? 'active' : ''}`}
             onClick={() => setShowDoors(!showDoors)}
           >
-            Doors ({doors.length + entrances.length})
+            Doors ({doors.length + entrances.length + currentAddedDoors.length})
           </button>
           <button
             type="button"
@@ -684,16 +854,6 @@ export default function App() {
               onClick={() => setShowRoute(!showRoute)}
             >
               Route ({activeRoute.length_m}m)
-            </button>
-          )}
-          {!activeRoute && selectedBuildingId === 'proc-factory-dev-003' && (
-            <button
-              type="button"
-              className="layer-toggle-btn"
-              onClick={loadRouteMock}
-              style={{ color: '#ef4444' }}
-            >
-              Load Route Mock
             </button>
           )}
         </div>
@@ -820,12 +980,16 @@ export default function App() {
               const typeClass = `type-${space.type.toLowerCase()}`;
               const { area } = getPolygonMetrics(space.polygon);
 
+              // Step 6: Action effects on spaces (closed red fill, highlight pulse)
+              const isClosed = closedElementIds.has(space.id);
+              const isHighlighted = highlightedSpaceIds.has(space.id);
+
               return (
                 <polygon
                   key={space.id}
                   id={space.id}
                   points={flippedPointsStr}
-                  className={`space-polygon ${typeClass}`}
+                  className={`space-polygon ${typeClass} ${isClosed ? 'closed-space' : ''} ${isHighlighted ? 'pulse-highlight' : ''}`}
                   strokeWidth={strokeWidth}
                   onMouseEnter={(e) => {
                     setHoveredEntity({ kind: 'space', space, area });
@@ -862,6 +1026,9 @@ export default function App() {
                   categoryClass = 'asset-storage';
                 }
 
+                // Step 6: Action highlight pulse on assets
+                const isAssetHighlighted = highlightedAssetIds.has(asset.id);
+
                 return (
                   <rect
                     key={asset.id}
@@ -872,7 +1039,7 @@ export default function App() {
                     height={d}
                     rx={Math.min(w, d) * 0.12}
                     transform={`translate(${posX}, ${posY}) rotate(${rot})`}
-                    className={`asset-rect ${categoryClass}`}
+                    className={`asset-rect ${categoryClass} ${isAssetHighlighted ? 'pulse-highlight' : ''}`}
                     onMouseEnter={(e) => {
                       e.stopPropagation();
                       setHoveredEntity({
@@ -892,10 +1059,10 @@ export default function App() {
             </g>
           )}
 
-          {/* Layer 3: Openings (Doors as dots, Entrances as triangles) */}
+          {/* Layer 3: Openings (Doors as dots, Entrances as triangles, Added Doors as green dots) */}
           {showDoors && (
             <g id="openings-layer">
-              {/* Doors: small dots at position */}
+              {/* Existing Doors: small dots at position */}
               {doors.map((door) => {
                 const doorX = door.position[0];
                 const doorY = bounds.maxY + bounds.minY - door.position[1];
@@ -912,6 +1079,36 @@ export default function App() {
                     r={doorRadius}
                     className="door-dot"
                     strokeWidth={strokeWidth * 0.5}
+                    onMouseEnter={(e) => {
+                      e.stopPropagation();
+                      setHoveredEntity({ kind: 'door', opening: door, connectedRefs });
+                      setTooltipPos({ x: e.clientX, y: e.clientY });
+                    }}
+                    onMouseLeave={() => {
+                      setHoveredEntity(null);
+                      setTooltipPos(null);
+                    }}
+                  />
+                );
+              })}
+
+              {/* Added Doors (Step 6: new dot, green) */}
+              {currentAddedDoors.map((door) => {
+                const doorX = door.position[0];
+                const doorY = bounds.maxY + bounds.minY - door.position[1];
+                const connectedRefs = door.space_ids
+                  .map((id) => spaceMap.get(id)?.ref || spaceMap.get(id)?.name || id)
+                  .filter(Boolean);
+
+                return (
+                  <circle
+                    key={door.id}
+                    id={door.id}
+                    cx={doorX}
+                    cy={doorY}
+                    r={doorRadius * 1.3}
+                    className="added-door-dot"
+                    strokeWidth={strokeWidth * 0.7}
                     onMouseEnter={(e) => {
                       e.stopPropagation();
                       setHoveredEntity({ kind: 'door', opening: door, connectedRefs });
@@ -989,21 +1186,16 @@ export default function App() {
           {/* Layer 5: Route Layer (Step 5) */}
           {showRoute && currentFloorRoute && (
             <g id="route-layer">
-              {/* Thick outer casing / glow */}
               <polyline
                 points={currentFloorRoute.pointsStr}
                 className="route-casing"
                 strokeWidth={strokeWidth * 3.8}
               />
-
-              {/* Core animated dashing route line */}
               <polyline
                 points={currentFloorRoute.pointsStr}
                 className="route-core"
                 strokeWidth={strokeWidth * 1.9}
               />
-
-              {/* Start Dot (if on global start floor) */}
               {currentFloorRoute.isGlobalStartFloor && (
                 <circle
                   cx={currentFloorRoute.startPoint[0]}
@@ -1013,8 +1205,6 @@ export default function App() {
                   strokeWidth={strokeWidth * 0.6}
                 />
               )}
-
-              {/* End Star (if on global destination floor) */}
               {currentFloorRoute.isGlobalEndFloor && (
                 <polygon
                   points={getStarPoints(
@@ -1074,7 +1264,7 @@ export default function App() {
             {hoveredEntity.kind === 'door' && (
               <>
                 <div className="tooltip-title">
-                  <span>Door</span>
+                  <span>{hoveredEntity.opening.synthetic ? 'Added Door (New)' : 'Door'}</span>
                   <span className="tooltip-badge">{hoveredEntity.opening.step_free ? 'Step-free' : 'Step'}</span>
                 </div>
                 <div className="tooltip-meta-row">
@@ -1100,6 +1290,128 @@ export default function App() {
             )}
           </div>
         )}
+
+        {/* Floating Chat Panel (Step 6) */}
+        <div className={`chat-panel-container ${chatMinimized ? 'minimized' : ''}`}>
+          <div className="chat-header" onClick={() => chatMinimized && setChatMinimized(false)}>
+            <div className="chat-title-group">
+              <span className="chat-status-dot" />
+              <span>Building Assistant</span>
+            </div>
+
+            {!chatMinimized && (
+              <select
+                aria-label="Pick Mock"
+                className="mock-selector-select"
+                onChange={(e) => {
+                  if (e.target.value) handleSelectMock(e.target.value);
+                }}
+                defaultValue=""
+              >
+                <option value="" disabled>
+                  Pick Mock...
+                </option>
+                {MOCK_OPTIONS.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            <div className="chat-controls-btns">
+              <button
+                type="button"
+                className="chat-btn-icon"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setChatMinimized(!chatMinimized);
+                }}
+                title={chatMinimized ? 'Expand Chat' : 'Minimize Chat'}
+              >
+                {chatMinimized ? '▲' : '−'}
+              </button>
+            </div>
+          </div>
+
+          {!chatMinimized && (
+            <>
+              {/* Message List */}
+              <div className="chat-messages-list">
+                {messages.map((msg) => (
+                  <div key={msg.id} className={`chat-message-bubble ${msg.sender}`}>
+                    {/* Understood chip */}
+                    {msg.response?.understood && (
+                      <span className="understood-chip">
+                        💡 Understood: {msg.response.understood}
+                      </span>
+                    )}
+
+                    {/* Clarification chip */}
+                    {msg.response?.needs_clarification && (
+                      <span className="clarify-chip">
+                        ⚠️ Needs clarification
+                      </span>
+                    )}
+
+                    <div>{msg.text}</div>
+
+                    {/* Action badges */}
+                    {msg.response?.actions && msg.response.actions.length > 0 && (
+                      <div className="action-badges-row">
+                        {msg.response.actions.map((act, actIdx) => (
+                          <span
+                            key={actIdx}
+                            className={`action-badge ${
+                              act.type === 'door_added' ? 'door' : act.type
+                            }`}
+                          >
+                            {act.type === 'route' && `Route: ${act.length_m} m`}
+                            {act.type === 'highlight' && `Highlighted elements`}
+                            {act.type === 'closed' && `Closed: ${act.element_ids.length} element(s)`}
+                            {act.type === 'door_added' && `New Door: ${act.opening.width_m}m`}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+                <div ref={messagesEndRef} />
+              </div>
+
+              {/* Quick Mock Chips */}
+              <div className="quick-mocks-bar">
+                {MOCK_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    className="quick-mock-chip"
+                    onClick={() => handleSelectMock(opt.id)}
+                  >
+                    {opt.label.split(':')[0]}
+                  </button>
+                ))}
+              </div>
+
+              {/* Chat Input Bar */}
+              <div className="chat-input-bar">
+                <input
+                  type="text"
+                  placeholder="Ask for route, room, or closures..."
+                  value={inputQuery}
+                  onChange={(e) => setInputQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSendMessage();
+                  }}
+                  className="chat-input"
+                />
+                <button type="button" className="chat-send-btn" onClick={handleSendMessage}>
+                  Send
+                </button>
+              </div>
+            </>
+          )}
+        </div>
 
         {/* Color & Symbol Legend */}
         <div className="legend-bar">
