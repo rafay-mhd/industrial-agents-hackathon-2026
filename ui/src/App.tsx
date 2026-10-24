@@ -214,6 +214,11 @@ export default function App() {
   ]);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
+  // Voice Controls State (Step 9)
+  const [isListening, setIsListening] = useState(false);
+  const [ttsEnabled, setTtsEnabled] = useState(true);
+  const recognitionRef = useRef<any>(null);
+
   // Pan and Zoom State
   const [zoom, setZoom] = useState(1.0);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -337,6 +342,47 @@ export default function App() {
     loadBuilding('proc-factory-dev-003');
   }, [loadBuilding]);
 
+  // Step 9: Text-to-Speech (TTS)
+  const speakText = useCallback(
+    async (text: string) => {
+      if (!text || !ttsEnabled) return;
+      // Strip markdown syntax for natural voice reading
+      const cleanText = text.replace(/[*_#`[\]()]/g, '').trim();
+      if (!cleanText) return;
+
+      // Try Backend /tts if live server is reachable
+      if (serverOnline) {
+        try {
+          const resp = await fetch(`${SERVER_URL}/tts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: cleanText }),
+          });
+          if (resp.ok) {
+            const blob = await resp.blob();
+            const audioUrl = URL.createObjectURL(blob);
+            const audio = new Audio(audioUrl);
+            await audio.play();
+            return;
+          }
+        } catch (e) {
+          console.warn('Backend /tts request failed, falling back to Web Speech Synthesis:', e);
+        }
+      }
+
+      // Fallback to browser Web Speech API SpeechSynthesis
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(cleanText);
+        utterance.rate = 1.0;
+        utterance.pitch = 1.0;
+        utterance.lang = 'en-US';
+        window.speechSynthesis.speak(utterance);
+      }
+    },
+    [serverOnline, ttsEnabled]
+  );
+
   // Fallback Mock Dispatcher
   const fallbackMockDispatch = useCallback(
     (text: string) => {
@@ -370,10 +416,11 @@ export default function App() {
           setMessages((prev) => [...prev, agentMsg]);
           if (res.understood) setRouteUnderstood(res.understood);
           applyActions(res.actions);
+          speakText(res.reply);
         })
         .catch((err) => console.error('Error fetching mock response:', err));
     },
-    [applyActions]
+    [applyActions, speakText]
   );
 
   // Pick a mock response from dropdown or quick chips
@@ -405,60 +452,126 @@ export default function App() {
           setMessages((prev) => [...prev, userMsg, agentMsg]);
           if (res.understood) setRouteUnderstood(res.understood);
           applyActions(res.actions);
+          speakText(res.reply);
         })
         .catch((err) => console.error('Error applying mock:', err));
     },
-    [applyActions]
+    [applyActions, speakText]
   );
 
-  // Send message on Enter or click (Step 7: POST /buildings/{id}/chat replaces mocks when online)
-  const handleSendMessage = useCallback(() => {
-    if (!inputQuery.trim()) return;
-    const text = inputQuery.trim();
-    setInputQuery('');
+  // Send message on Enter, click, or voice (Step 7 & 9)
+  const handleSendMessage = useCallback(
+    (overrideText?: string) => {
+      const rawText = typeof overrideText === 'string' ? overrideText : inputQuery;
+      if (!rawText.trim()) return;
+      const text = rawText.trim();
+      setInputQuery('');
 
-    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const userMsg: ChatMessage = {
-      id: `user-${Date.now()}`,
-      sender: 'user',
-      text,
-      timestamp: time,
-    };
-    setMessages((prev) => [...prev, userMsg]);
+      const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const userMsg: ChatMessage = {
+        id: `user-${Date.now()}`,
+        sender: 'user',
+        text,
+        timestamp: time,
+      };
+      setMessages((prev) => [...prev, userMsg]);
 
-    if (serverOnline) {
-      fetch(`${SERVER_URL}/buildings/${selectedBuildingId}/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: getSessionId(),
-          message: text,
-        }),
-      })
-        .then((res) => {
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return res.json();
+      if (serverOnline) {
+        fetch(`${SERVER_URL}/buildings/${selectedBuildingId}/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: getSessionId(),
+            message: text,
+          }),
         })
-        .then((res: ChatResponse) => {
-          const agentMsg: ChatMessage = {
-            id: `agent-${Date.now()}`,
-            sender: 'agent',
-            text: res.reply,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            response: res,
-          };
-          setMessages((prev) => [...prev, agentMsg]);
-          if (res.understood) setRouteUnderstood(res.understood);
-          applyActions(res.actions);
-        })
-        .catch((err) => {
-          console.warn('Live chat failed, using fallback mock dispatch:', err);
-          fallbackMockDispatch(text);
-        });
-    } else {
-      fallbackMockDispatch(text);
+          .then((res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.json();
+          })
+          .then((res: ChatResponse) => {
+            const agentMsg: ChatMessage = {
+              id: `agent-${Date.now()}`,
+              sender: 'agent',
+              text: res.reply,
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              response: res,
+            };
+            setMessages((prev) => [...prev, agentMsg]);
+            if (res.understood) setRouteUnderstood(res.understood);
+            applyActions(res.actions);
+            speakText(res.reply);
+          })
+          .catch((err) => {
+            console.warn('Live chat failed, using fallback mock dispatch:', err);
+            fallbackMockDispatch(text);
+          });
+      } else {
+        fallbackMockDispatch(text);
+      }
+    },
+    [inputQuery, serverOnline, selectedBuildingId, applyActions, fallbackMockDispatch, speakText]
+  );
+
+  // Step 9: Web Speech API Recognition (STT Microphone)
+  const toggleListening = useCallback(() => {
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert(
+        'Speech Recognition is not supported by your current browser. Please use Google Chrome or Microsoft Edge.'
+      );
+      return;
     }
-  }, [inputQuery, serverOnline, selectedBuildingId, applyActions, fallbackMockDispatch]);
+
+    if (isListening) {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {
+          // ignore
+        }
+      }
+      setIsListening(false);
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'en-US';
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        setIsListening(true);
+      };
+
+      recognition.onresult = (event: any) => {
+        const transcript = event.results?.[0]?.[0]?.transcript;
+        if (transcript) {
+          setInputQuery(transcript);
+          handleSendMessage(transcript);
+        }
+        setIsListening(false);
+      };
+
+      recognition.onerror = (event: any) => {
+        console.warn('Speech recognition error:', event.error);
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (err) {
+      console.error('Failed to initialize speech recognition:', err);
+      setIsListening(false);
+    }
+  }, [isListening, handleSendMessage]);
 
   // Handle Custom File Upload
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1411,23 +1524,36 @@ export default function App() {
             </div>
 
             {!chatMinimized && (
-              <select
-                aria-label="Pick Mock"
-                className="mock-selector-select"
-                onChange={(e) => {
-                  if (e.target.value) handleSelectMock(e.target.value);
-                }}
-                defaultValue=""
-              >
-                <option value="" disabled>
-                  Pick Mock...
-                </option>
-                {MOCK_OPTIONS.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.label}
+              <>
+                <button
+                  type="button"
+                  className={`speaker-toggle-btn ${ttsEnabled ? 'active' : ''}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setTtsEnabled(!ttsEnabled);
+                  }}
+                  title={ttsEnabled ? 'Voice output enabled - click to mute' : 'Voice output muted - click to enable'}
+                >
+                  {ttsEnabled ? '🔊 Audio ON' : '🔇 Audio OFF'}
+                </button>
+                <select
+                  aria-label="Pick Mock"
+                  className="mock-selector-select"
+                  onChange={(e) => {
+                    if (e.target.value) handleSelectMock(e.target.value);
+                  }}
+                  defaultValue=""
+                >
+                  <option value="" disabled>
+                    Pick Mock...
                   </option>
-                ))}
-              </select>
+                  {MOCK_OPTIONS.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </>
             )}
 
             <div className="chat-controls-btns">
@@ -1465,7 +1591,20 @@ export default function App() {
                       </span>
                     )}
 
-                    <div>{msg.text}</div>
+                    <div>
+                      {msg.text}
+                      {msg.sender === 'agent' && (
+                        <button
+                          type="button"
+                          className="msg-speak-btn"
+                          onClick={() => speakText(msg.text)}
+                          title="Read aloud"
+                          aria-label="Read aloud"
+                        >
+                          🔊
+                        </button>
+                      )}
+                    </div>
 
                     {/* Action badges */}
                     {msg.response?.actions && msg.response.actions.length > 0 && (
@@ -1516,7 +1655,16 @@ export default function App() {
                   }}
                   className="chat-input"
                 />
-                <button type="button" className="chat-send-btn" onClick={handleSendMessage}>
+                <button
+                  type="button"
+                  className={`voice-mic-btn ${isListening ? 'listening' : ''}`}
+                  onClick={toggleListening}
+                  title={isListening ? 'Listening... click to stop' : 'Speak message (Microphone)'}
+                  aria-label="Microphone input"
+                >
+                  {isListening ? '🛑' : '🎤'}
+                </button>
+                <button type="button" className="chat-send-btn" onClick={() => handleSendMessage()}>
                   Send
                 </button>
               </div>

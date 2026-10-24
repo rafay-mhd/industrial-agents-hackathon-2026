@@ -1076,4 +1076,82 @@
   box-shadow: 0 2px 8px var(--accent-glow);
 }
 
+/* Voice Controls (Step 9) */
+.voice-mic-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-main);
+  transition: all 0.15s ease;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.voice-mic-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #60a5fa;
+}
+
+.voice-mic-btn.listening {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: #ef4444;
+  color: #ef4444;
+  animation: pulseMic 1s infinite alternate;
+}
+
+@keyframes pulseMic {
+  from {
+    box-shadow: 0 0 4px #ef4444;
+    transform: scale(1);
+  }
+  to {
+    box-shadow: 0 0 14px #ef4444;
+    transform: scale(1.06);
+  }
+}
+
+.speaker-toggle-btn {
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.speaker-toggle-btn.active {
+  background: rgba(16, 185, 129, 0.15);
+  border-color: rgba(16, 185, 129, 0.4);
+  color: #34d399;
+}
+
+.msg-speak-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  opacity: 0.6;
+  font-size: 13px;
+  padding: 2px 4px;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  vertical-align: middle;
+  margin-left: 6px;
+}
+
+.msg-speak-btn:hover {
+  opacity: 1;
+  transform: scale(1.15);
+}
+
+
 
