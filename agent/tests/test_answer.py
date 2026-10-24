@@ -41,7 +41,7 @@ class AnswerTests(unittest.TestCase):
             with patch.object(entrypoint.BuildingAgent, "ask", ask):
                 first = entrypoint.answer(BUILDING, "First question")
                 second = entrypoint.answer(BUILDING, "Second question")
-            constructor.assert_called_once_with()
+            constructor.assert_called_once_with(max_retries=0)
 
         self.assertEqual(first, "Example explanation\nAnswer: 1")
         self.assertEqual(second, first)

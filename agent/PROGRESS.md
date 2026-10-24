@@ -2,13 +2,13 @@
 
 Source of milestones: `TEAM_PLAN.md`, section 5.2.
 
-**Current status:** step 2 complete; step 3 next.
-**Checklist progress:** 2 / 12 steps = 16.7%.
+**Current status:** step 3 complete; step 4 next.
+**Checklist progress:** 3 / 12 steps = 25%.
 This is milestone completion, not measured agent accuracy or a time estimate.
 
 - [x] 1. Repository setup and dependencies
 - [x] 2. Answer entry point and small live baseline
-- [ ] 3. Parallel benchmark runner
+- [x] 3. Parallel benchmark runner
 - [ ] 4. Tool wrappers for Core methods
 - [ ] 5. Benchmark prompt and first accurate question type
 - [ ] 6. Scoreboard and failure diagnostics
@@ -57,6 +57,7 @@ The starter import check also uses `MPLCONFIGDIR=/tmp/industrial-agents-matplotl
 - The official evaluator successfully loads `agent.answer:answer` without API credentials.
 - Its seeded two-question sample selects `proc-factory-dev-003-H02` and `swiss-5097-H02`.
 - Core's oracle was attempted again and remains unavailable (`No module named 'core'`).
+
 ## Step 2 live baseline (2026-10-24)
 
 The user activated Anthropic credits and configured the key in ignored local `.env`.
@@ -81,12 +82,54 @@ uv run --env-file .env python -m benchmark.evaluate data/dev \
   custom-entry-point evaluator run; no cost estimate is asserted.
 - Core oracle attempted before recording completion; still unavailable (`No module named 'core'`).
 
-## Next: step 3
+## Step 3: parallel runner (2026-10-24)
 
-Build `agent/benchmark.py`: accept a building or split and JSONL/CSV question inputs, run with
-four workers, retry transient API failures, preserve one output row per question, and write
-CSV plus results JSONL with per-kind scoring when reference answers are available.
-Keep live checks small; accurate area answers await Core tool and benchmark prompt integration.
+- Implemented `agent/benchmark.py` for a single building or a split, with JSONL/CSV inputs
+  or a directory containing per-building `questions.jsonl` files.
+- Buildings are resolved by metadata id, so renamed building folders also work.
+- Four workers by default; `--workers` controls concurrency. Files preserve input order.
+- Three retries after the first attempt, with exponential backoff and jitter for transient
+  API failures. Permanent API errors are not retried. Disabled the SDK's internal retries
+  in `agent/answer.py` so they do not multiply the runner's retries.
+- Each selected question gets a CSV row and a JSONL diagnostic record, even on failure.
+  When no reply was returned, the CSV cell stays empty; no answer is fabricated.
+- CSV correctly quotes multiline replies; records are flushed as input-ordered results arrive.
+- Sidecar diagnostics include attempts, elapsed time, expected answer (if supplied), official
+  score, and error type. Expected answers and oracle inputs are not passed to the agent.
+- API errors omit response bodies and request headers from saved diagnostics.
+- Supports `--kinds`, `--per-kind`, and `--limit` for small development runs.
+- Invalid inputs/duplicate question ids fail before model calls. Outputs must be outside
+  source data. The CLI returns nonzero for execution/scoring errors after saving all rows;
+  incorrect but successfully evaluated answers do not cause a nonzero exit.
+- All 12 offline tests passed (3 entry-point tests, 9 runner tests), including actual concurrent
+  fake calls, successful/exhausted retries, permanent errors, unknown buildings, score failures,
+  CSV round trips, input validation, and filtering.
+- Real-file loading checks mapped all 517 train, 138 dev, and 145 test questions to buildings.
+  The test CSV also loaded all 145 questions with no reference answers.
+- Required Core oracle check remains unavailable (`No module named 'core'`).
+
+Live verification command:
+
+```bash
+uv run --env-file .env python -m agent.benchmark \
+  data/dev/proc-factory-dev-003 \
+  data/dev/proc-factory-dev-003/questions.jsonl \
+  --out agent_output/benchmark/step3_factory.csv
+```
+
+- Exit code 0; five nonempty replies, one attempt each, zero execution/scoring errors.
+- Verified five unique matching IDs and identical reply text in CSV and JSONL.
+- Accuracy: 0/5 with the current starter tools (largest_room, floor_area_total,
+  wide_delivery_count, errand, shared_walls_count). Capability improvements belong to steps 4–5.
+- Outputs: `agent_output/benchmark/step3_factory.csv` and `step3_factory.jsonl`.
+- Live requests used Anthropic credits; exact spending is not measured by this runner yet.
+
+## Next: step 4
+
+Implement `agent/tools.py::make_tools(building)` around the agreed Core API. Preserve existing
+search, route, closure, and door-edit capabilities; add wrappers for the delivered computation
+methods, with clear descriptions and compact outputs. Report unavailable Core methods honestly
+until the teammate delivers them. Keep geometry and routing implementations in Core's ownership.
 
 ## Integration points to keep visible
 

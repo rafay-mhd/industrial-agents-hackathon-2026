@@ -28,7 +28,8 @@ def _get_client() -> anthropic.Anthropic:
     global _client
     with _client_lock:
         if _client is None:
-            _client = anthropic.Anthropic()
+            # The benchmark runner owns retries; avoid multiplying SDK retries.
+            _client = anthropic.Anthropic(max_retries=0)
         return _client
 
 
