@@ -1,8 +1,9 @@
 # core — the deterministic brain
 
 Everything the agent states about a building is computed here, never guessed. `core.building.Building`
-extends the starter's `BuildingMap` (same route model, same costs) with every fact the benchmark questions
-need. Proven against **517/517 train and 138/138 dev** benchmark answers and **229/229** warm-up routes.
+extends the starter's `BuildingMap` (kit **1.1.0** route model) with every fact the benchmark questions need.
+Proven against **517/517 train and 138/138 dev** benchmark answers and **1,761/1,761 train, 369/369 dev**
+warm-up answers of kit 1.1.0, including the 112 "no route" cases.
 
 ```bash
 uv run python -m core.oracle_check data/dev                  # all nine kinds, seconds, no API calls
@@ -51,9 +52,11 @@ reference is unknown or ambiguous. Tools should turn `MapError` into a tool erro
 | `reachable_rooms(start, floor, step_free=True, min_width_m=None, closed=())` | `{count, floor, start, rooms, closed}` | `wide_delivery_count`, `step_free_reachable_count` |
 | `nearest_room_with_asset(start, asset_type, step_free=False)` | `{space_id, name, floor, distance_m, asset_id, asset_name}` | |
 | `errand(start, asset_type, floor, room_type, step_free=False)` | `{total_m, legs_m, start, via, target, steps}` | `errand` |
-| `distance_to_exit(space, step_free=False)` | float (metres to the nearest entrance) | |
+| `distance_to_exit(space, step_free=False)` | float (metres to the nearest entrance door) | |
+| `exit_distances(graph)` | `{node: metres}` to the nearest entrance for every node, one Dijkstra | |
 | `what_if_door(a, b, floor, threshold_m=1.0)` | `{count, door, between, floor, rooms_improved}` | `what_if_door` |
-| `route(start, dest, step_free=False, via=None)` | `RouteResult` (starter) | warm-up routes |
+| `route(start, dest, step_free=False, via=None, min_width_m=None, no_transit_types=None, forklift=False)` | `RouteResult`; `space_path` lists every space crossed | warm-up routes |
+| `route_summary(route=None)` | `{length_m, spaces (labels), space_ids, steps}`: the ordered spaces the judges score | Sunday route questions |
 | `route_geometry(route=None)` | `{length_m, floor_order, floors: {"0": [[x, y], ...]}, start, destination}` for the UI | |
 | `set_closed(ref, closed)`, `add_door(a, b)` | starter behaviour; graph caches are refreshed | |
 | `room_types(floor=None)`, `asset_types(floor=None)`, `assets_of_type(type, floor=None)` | lists for lookups | |
@@ -71,6 +74,18 @@ reference is unknown or ambiguous. Tools should turn `MapError` into a tool erro
 
 Never write `m2` (the 2 counts as a second number), never a comma decimal, never two numbers.
 
+## Route model (kit 1.1.0, the rules the judges grade with)
+- Inside a space, walking goes **door to door**, 15 cm off the walls, round corners, never through a wall;
+  a door lands 30 cm inside the space. Computed by the starter's `space_walks` (visibility graph), which we
+  reuse and share between instances of the same building (`_SHARED_WALKS`), so a fresh `Building` per
+  question stays cheap even for Terminal 2 (7 s once, then instant).
+- **Stairs** 2 m per metre climbed; **lift** 15 m once per ride + 1 m per metre climbed; height from `elevation_m`.
+- **No way round the outside**: entrances are dead ends. Two wings that only meet outside have no route,
+  and the right answer is "no route" (`MapError`).
+- `step_free` drops stairs and `step_free: false` openings; `min_width_m` drops narrower openings;
+  `forklift=True` means openings ≥ 3 m and production, assembly and additive bays may be entered but never
+  crossed. The bay set is our reading of the organizers' note and is not yet confirmed by any example.
+
 ## Definitions, as calibrated on the data
 - **Area**: shapely polygon area of the space outline; room type must match exactly.
 - **Room centre**: polygon centroid at the floor's `elevation_m`.
@@ -84,7 +99,7 @@ Never write `m2` (the 2 counts as a second number), never a comma decimal, never
 - **Errand**: nearest room holding the item by route length (stairs allowed, the start room excluded),
   then the largest room of the type on the floor; total = both legs.
 - **What-if door**: 0.9 m step-free door at the middle of the shared wall; count rooms (`type == room`) on
-  the target floor whose route-model distance to `outside` drops by more than 1 m.
+  the target floor whose route-model distance to the nearest entrance door drops by more than 1 m.
 
 ## Files
 - `building.py` — `Building`

@@ -199,6 +199,20 @@ If it reports problems, the Core owner fixes names while you keep the runner war
 
 ---
 
+## 3b. Kit 1.1.0 (2026-10-24 evening): what changed for you
+- The organizers corrected the route rules (door-to-door walking, stairs 2 m per metre climbed, lift 15 m +
+  1 m per metre, no way round the outside) and recomputed 1,314 train/dev answers. The core follows the new
+  rules and is back at 100% on all of them. Your tools need no change; **regenerate the test CSV**.
+- The hidden-building route questions are graded on the **ordered list of spaces passed through**, validity
+  first, then length within 1%. Use `route_summary()` (new) for that list; `RouteResult.space_path` now
+  includes corridors crossed door to door.
+- "No route" is a correct answer when the rules forbid one. `route()` raises `MapError` then; the reply
+  should say so instead of guessing.
+- `route(..., forklift=True)` applies the organizers' forklift note (openings ≥ 3 m, bays only as
+  destinations). Expose it as a tool parameter for the Sunday file in case forklift questions appear.
+- A fresh `Building` per question is still the right pattern: walking lengths are shared per building, so
+  only the first load of a building pays (7 s for Terminal 2, under 1 s elsewhere).
+
 ## 4. Gotchas we already hit
 - **`import anthropic` fails inside Claude Code's sandbox** on this machine: the sandbox refuses to read any
   path named `credentials*`, and the SDK has a folder with that name. Run anything that calls the API from your
