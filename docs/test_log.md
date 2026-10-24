@@ -13,6 +13,8 @@ uv run python -m core.oracle_check data/dev
 uv run python -m core.oracle_check data/dev --warmup
 # does every name in a question file resolve? (run on the Sunday building first)
 uv run python -m core.check_questions data/test data/test/questions.csv
+# ambiguity behaviour (chat mode): does the agent ask which room when a name exists several times? (~19 questions, cents)
+uv run --frozen --env-file .env python tests/live_ambiguity.py data/train data/dev --out agent_output/livetest/ambiguity.jsonl
 # live, costs credits: Claude reads the sentence, picks the tool, core computes
 uv run --frozen --env-file .env python -m agent.benchmark data/dev data/dev --no-kind-hints --model claude-sonnet-5-5 --out agent_output/benchmark/dev.csv
 uv run --frozen python -m agent.report agent_output/benchmark/dev.jsonl
@@ -23,6 +25,43 @@ Record: date, commit, model, per-kind answers and extraction, misses with cause,
 
 ---
 
+## 2026-10-24 — ambiguity behaviour test, chat mode, all ambiguous train + dev questions
+
+**Commit**: `ceeeee2` + `tests/live_ambiguity.py`. **Model**: `claude-sonnet-5-5`, chat prompt. **Run by**: Core owner.
+
+Step 1 (free) scanned every train, dev and test question for a 'Room (Floor n)' mention that the core's resolver
+reports as ambiguous (several rooms with that name on that floor). Found 19: 18 in train, 1 in dev, **0 in test**.
+All 19 are in the OSM buildings `osm-way37850565` (rooms named "Büro"), `osm-way58216509` (duplicate labels such as
+"Generic room N2146") and `osm-way27917482` ("Generic room 03.08.033" three times). Step 2 sent those 19 to the
+chat agent. Success = the reply asks which room is meant and does not commit to a route or answer.
+
+| Kind               | Asked | Resolved without asking | Guessed | Total |
+|--------------------|-------|-------------------------|---------|-------|
+| route              | 5     | 0                       | 0       | 5     |
+| room_stacked       | 2     | 0                       | 0       | 2     |
+| route_step_free    | 2     | 0                       | 0       | 2     |
+| route_with_closure | 3     | 0                       | 0       | 3     |
+| straight_line_3d   | 2     | 0                       | 0       | 2     |
+| tour               | 2     | 0                       | 0       | 2     |
+| shared_walls_count | 1     | 1                       | 0       | 2     |
+| errand             | 1     | 0                       | 0       | 1     |
+| Total              | 18    | 1                       | 0       | 19    |
+
+- **18 asked**, each naming how many rooms share the label and offering a way to tell them apart (contents,
+  neighbouring room). Where the question also closed a lift or stairs, the closure was applied first.
+- **1 resolved without asking** (`osm-way58216509-H05`): the agent checked both rooms named N2148A, found each
+  touches 9 other rooms, explained that the ambiguity does not change the answer, and answered 9. That is the
+  rubric's "ask only what it needs" done right.
+- **0 guessed silently.**
+
+Cost ≈ $0.40, 19 chat turns, under a minute with 4 workers.
+
+Note for the benchmark: in benchmark mode the same questions get an Answer line regardless (the prompt forbids
+asking back there); the agent then runs the tool for every candidate and takes the majority, which was right in
+4 of 5 cases in the live run above. The test set has no ambiguous mentions, so this cannot cost test points.
+
+---
+
 ## 2026-10-24 — full live run, sentence only, all train + dev questions
 
 **Commit**: `ceeeee2` (main, after the Agent branch merge). **Model**: `claude-sonnet-5-5`, benchmark prompt
@@ -30,32 +69,32 @@ for the scored kinds, chat prompt for the warm-ups, `--no-kind-hints`, 4 workers
 
 ### Scored kinds (`questions.jsonl`), official scorer
 
-| Kind | Train answers | Train extraction | Dev answers | Dev extraction |
-|---|---|---|---|---|
-| floor_area_total | 150 / 150 | 150 / 150 | 31 / 31 | 31 / 31 |
-| largest_room | 76 / 76 | 76 / 76 | 20 / 20 | 20 / 20 |
-| shared_walls_count | 118 / 119 | 118 / 119 | 24 / 24 | 24 / 24 |
-| errand | 74 / 74 | 73 / 74 | 19 / 19 | 19 / 19 |
-| wide_delivery_count | 61 / 61 | 61 / 61 | 19 / 19 | 19 / 19 |
-| straight_line_3d | 17 / 17 | 15 / 17 | 13 / 13 | 13 / 13 |
-| room_stacked | 17 / 17 | 16 / 17 | 9 / 9 | 9 / 9 |
-| what_if_door | 2 / 2 | 2 / 2 | 2 / 2 | 2 / 2 |
-| step_free_reachable_count | 1 / 1 | 1 / 1 | 1 / 1 | 1 / 1 |
-| **Total** | **516 / 517 (99.8%)** | **512 / 517** | **138 / 138 (100%)** | **138 / 138** |
+| Kind                      | Train answers     | Train extraction | Dev answers      | Dev extraction |
+|---------------------------|-------------------|------------------|------------------|----------------|
+| floor_area_total          | 150 / 150         | 150 / 150        | 31 / 31          | 31 / 31        |
+| largest_room              | 76 / 76           | 76 / 76          | 20 / 20          | 20 / 20        |
+| shared_walls_count        | 118 / 119         | 118 / 119        | 24 / 24          | 24 / 24        |
+| errand                    | 74 / 74           | 73 / 74          | 19 / 19          | 19 / 19        |
+| wide_delivery_count       | 61 / 61           | 61 / 61          | 19 / 19          | 19 / 19        |
+| straight_line_3d          | 17 / 17           | 15 / 17          | 13 / 13          | 13 / 13        |
+| room_stacked              | 17 / 17           | 16 / 17          | 9 / 9            | 9 / 9          |
+| what_if_door              | 2 / 2             | 2 / 2            | 2 / 2            | 2 / 2          |
+| step_free_reachable_count | 1 / 1             | 1 / 1            | 1 / 1            | 1 / 1          |
+| Total                     | 516 / 517 (99.8%) | 512 / 517        | 138 / 138 (100%) | 138 / 138      |
 
 Tool choice correct on all 655; one tool call per question; no API errors, no retries.
 
 ### Warm-up kinds (`questions_basic.jsonl`), starter scorer on what the tools computed
 
-| Kind | Train | Dev |
-|---|---|---|
-| locate | 452 / 453 | 100 / 100 |
-| count | 199 / 199 | 40 / 40 |
-| route | 595 / 600 | 120 / 120 |
-| route_step_free | 198 / 200 | 40 / 40 |
-| route_with_closure | 107 / 109 | 28 / 29 |
-| tour | 198 / 200 | 40 / 40 |
-| **Total** | **1,749 / 1,761 (99.3%)** | **368 / 369 (99.7%)** |
+| Kind               | Train                 | Dev               |
+|--------------------|-----------------------|-------------------|
+| locate             | 452 / 453             | 100 / 100         |
+| count              | 199 / 199             | 40 / 40           |
+| route              | 595 / 600             | 120 / 120         |
+| route_step_free    | 198 / 200             | 40 / 40           |
+| route_with_closure | 107 / 109             | 28 / 29           |
+| tour               | 198 / 200             | 40 / 40           |
+| Total              | 1,749 / 1,761 (99.3%) | 368 / 369 (99.7%) |
 
 Two starter-scorer artifacts were corrected by hand when reading the raw results: (1) the chat agent locates
 items via `assets_of_type`, not the starter's `search_building`, so `located_asset_ids` is never set even when
@@ -74,12 +113,12 @@ found step-free route.
   (Balcony 2.17)" is correct, the text check expected the dataset's word order. Not an agent error.
 
 ### Cost and time
-| Run | Questions | Time | Approx. cost (Sonnet list prices) |
-|---|---|---|---|
-| Benchmark train + dev | 655 | 15 min | $10 |
-| Warm-up dev | 369 | 6 min | $4.50 |
-| Warm-up train | 1,761 | 27 min | $21 |
-| **Total** | **2,785** | | **≈ $36** |
+| Run                   | Questions | Time   | Approx. cost (Sonnet list prices) |
+|-----------------------|-----------|--------|-----------------------------------|
+| Benchmark train + dev | 655       | 15 min | $10                               |
+| Warm-up dev           | 369       | 6 min  | $4.50                             |
+| Warm-up train         | 1,761     | 27 min | $21                               |
+| Total                 | 2,785     |        | ≈ $36                             |
 
 Tokens, benchmark train: 349k input, 55k output, 6.16M cache read, 2.20M cache write. Dev: 91k / 15k / 1.88M / 0.53M.
 
@@ -93,12 +132,12 @@ Tokens, benchmark train: 349k input, 55k output, 6.16M cache read, 2.20M cache w
 
 **Commit**: `a8279d8` (core branch, merged to main). Parameters fed straight from the dataset's `inputs`.
 
-| Set | Questions | Correct |
-|---|---|---|
-| Train benchmark, 9 kinds | 517 | 517 |
-| Dev benchmark, 9 kinds | 138 | 138 |
-| Train warm-up (locate, count, 4 route kinds) | 1,761 | 1,761 |
-| Dev warm-up | 369 | 369 |
+| Set                                          | Questions | Correct |
+|----------------------------------------------|-----------|---------|
+| Train benchmark, 9 kinds                     | 517       | 517     |
+| Dev benchmark, 9 kinds                       | 138       | 138     |
+| Train warm-up (locate, count, 4 route kinds) | 1,761     | 1,761   |
+| Dev warm-up                                  | 369       | 369     |
 
 Calibrations made to reach this: shared walls count rooms and halls only (balconies excluded, 143/143);
 room answers carry the room number (`label`) because OSM rooms share names. `errand` `via`/`target` ids match
