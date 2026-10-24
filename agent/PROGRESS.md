@@ -2,8 +2,8 @@
 
 Source of milestones: `TEAM_PLAN.md`, section 5.2.
 
-**Current status:** step 5 complete; step 6 next.
-**Checklist progress:** 5 / 12 steps = 41.7%.
+**Current status:** step 6 complete; step 7 next.
+**Checklist progress:** 6 / 12 steps = 50%.
 This is milestone completion, not measured agent accuracy or a time estimate.
 
 - [x] 1. Repository setup and dependencies
@@ -11,7 +11,7 @@ This is milestone completion, not measured agent accuracy or a time estimate.
 - [x] 3. Parallel benchmark runner
 - [x] 4. Tool wrappers for Core methods
 - [x] 5. Benchmark prompt and first accurate question type
-- [ ] 6. Scoreboard and failure diagnostics
+- [x] 6. Scoreboard and failure diagnostics
 - [ ] 7. Integrate remaining question types and compare models
 - [ ] 8. Full dev evaluation and test submission v1
 - [ ] 9. BENCHMARK.md and clean-checkout rehearsal
@@ -205,11 +205,54 @@ uv run --env-file .env python -m agent.benchmark data/dev data/dev \
   It is not a live score for all nine kinds; that expansion belongs to steps 7 and 8.
 - 55 live question runs in this step (4 sample + 51 full evaluation); exact credit spending not recorded.
 
-## Next: step 6
+## Step 6: scoreboard and tool traces (2026-10-24)
 
-Add `agent/report.py` and per-question tool-call logging. Report per-kind accuracy and show the
-question, tool calls/arguments, reply and expected answer for failures; distinguish reading/extraction
-mistakes from Core computation problems using the Core resolvers where applicable.
+- Added `agent/report.py`: official per-kind scores and failure evidence (question, tool arguments,
+  recorded results, reply, expected answer and errors). Run it without API credentials:
+
+```bash
+uv run python -m agent.report agent_output/benchmark/step6_traced.jsonl
+```
+
+- Every initialized answer attempt writes `trace.json` in its unique output directory. It records
+  actual SDK tool calls/results, response IDs/model names/stop reasons, token usage and errors.
+  It excludes model thinking and never re-executes tools to reconstruct a trace.
+- The runner includes calls, token totals and per-attempt trace references in its JSONL sidecar.
+  Context-local transfer keeps concurrent questions isolated; retries retain each attempt's evidence.
+  Trace-file write errors do not mask successful answers or the original API error.
+- Oracle inputs are retained only in evaluator diagnostics, never passed to the model. Extraction
+  checks use Core's resolvers to compare room/floor/type/asset references and task constraints.
+- Failure categories distinguish argument mismatches, final-answer rendering, tool errors, execution
+  errors, prior state changes, and tool-result mismatches. The latter is a review signal, not proof
+  of a Core bug. Diagnostics use the final attempt; usage includes all recorded attempts.
+- Legacy logs remain readable. Missing traces, inputs, buildings and usage remain explicitly unknown;
+  an API failure before a response is not counted as incorrect extraction. `--data` supplies a relocated
+  building root; `--failures N` optionally limits printed failure details.
+- All **34 offline tests pass**, including concurrent/retry isolation, partial traces, disk errors,
+  all nine extraction mappings, symmetric endpoints and controlled failure classification.
+- Required Core oracle remains **138/138**. Core, starter, benchmark reference and data files unchanged.
+- Re-scored the previous area log: **51/51 correct**, with extraction/token coverage correctly unknown.
+  Read the earlier 0/5 starter log and verified failure evidence prints without inventing old tool traces.
+
+Live verification used two questions without kind hints:
+
+```bash
+uv run --env-file .env python -m agent.benchmark data/dev data/dev \
+  --kinds floor_area_total largest_room --per-kind 1 --no-kind-hints \
+  --out agent_output/benchmark/step6_traced.csv
+```
+
+- Answers **2/2 correct**, extraction **2/2 correct**, one task tool and one attempt each.
+- Verified unique trace files match the CSV/JSONL replies, tool results, usage and model metadata.
+- Recorded tokens: 1,001 input, 182 output, 16,172 cache-read input, 16,172 cache-creation input.
+  These are provider-reported token categories, not a billing estimate.
+- Live results are in ignored local `agent_output/benchmark/step6_traced.*`.
+
+## Next: step 7
+
+Run live samples across all nine question kinds and compare Sonnet with Opus on the same sample.
+Use the scoreboard to diagnose failures; keep the cheaper model if accuracy is equal. The full dev
+evaluation and first test submission remain step 8.
 
 ## Integration points to keep visible
 

@@ -9,7 +9,7 @@ correct fields, plus attempts, elapsed time, building id, and error details.
 """
 
 import argparse
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 import csv
@@ -22,6 +22,7 @@ import time
 import anthropic
 
 from benchmark.score import score_reply
+from agent.diagnostics import error_details as _error_details, take_trace
 
 AnswerFunction = Callable[[Path, str], str]
 
@@ -34,6 +35,7 @@ class Question:
     text: str
     directory: Path | None
     expected: dict | None = None
+    inputs: dict | None = None
 
 
 def load_questions(buildings: Path, source: Path) -> list[Question]:
@@ -83,9 +85,14 @@ def load_questions(buildings: Path, source: Path) -> list[Question]:
                 expected = json.loads(expected) if expected.strip() else None
             if expected is not None and not isinstance(expected, dict):
                 raise ValueError(f"Expected answer must be a JSON object: {identifier}")
+            inputs = row.get("inputs")
+            if isinstance(inputs, str):
+                inputs = json.loads(inputs) if inputs.strip() else None
+            if inputs is not None and not isinstance(inputs, dict):
+                raise ValueError(f"Oracle inputs must be a JSON object: {identifier}")
             questions.append(Question(
                 identifier, row["building_id"], row["kind"], row["question"],
-                index.get(row["building_id"]), expected,
+                index.get(row["building_id"]), expected, inputs,
             ))
     if not questions:
         raise ValueError(f"No questions found in {source}")
@@ -117,16 +124,6 @@ def _retryable(error: Exception) -> bool:
     return isinstance(error, anthropic.APIError)
 
 
-def _error_details(error: Exception) -> dict:
-    # API error bodies are not needed in saved diagnostics (nor are request headers).
-    if isinstance(error, anthropic.APIError):
-        details = {"type": type(error).__name__, "message": "Anthropic request failed"}
-        if isinstance(error, anthropic.APIStatusError):
-            details["status_code"] = error.status_code
-        return details
-    return {"type": type(error).__name__, "message": str(error)[:500]}
-
-
 def answer_question(
     question: Question, answer_fn: AnswerFunction, retries: int = 3, retry_delay: float = 1.0,
     kind_hints: bool = True,
@@ -134,6 +131,7 @@ def answer_question(
     """Keep one result even on failure; never pass reference answers to the agent."""
     started = time.monotonic()
     reply, error, attempts = "", None, 0
+    traces = []
     if question.directory is None:
         error = {"type": "MissingBuilding", "message": f"Unknown building id: {question.building_id}"}
     else:
@@ -141,7 +139,13 @@ def answer_question(
             attempts += 1
             try:
                 message = f"Question kind: {question.kind}.\n\n{question.text}" if kind_hints else question.text
-                response = answer_fn(question.directory, message)
+                take_trace()
+                try:
+                    response = answer_fn(question.directory, message)
+                finally:
+                    trace = take_trace()
+                    if trace is not None:
+                        traces.append({**trace, "attempt": attempts})
                 if not isinstance(response, str):
                     raise TypeError("answer() must return a string")
                 reply = response
@@ -164,6 +168,9 @@ def answer_question(
             correct = score_reply(question.expected, reply)
         except Exception as exc:
             scoring_error = _error_details(exc)
+    usage = Counter()
+    for trace in traces:
+        usage.update(trace.get("usage", {}))
     return {
         "id": question.id, "building_id": question.building_id, "kind": question.kind,
         "question": question.text, "answer": question.expected, "reply": reply,
@@ -171,6 +178,12 @@ def answer_question(
         "elapsed_s": round(time.monotonic() - started, 3),
         "error": error, "scoring_error": scoring_error,
         "kind_hint": question.kind if kind_hints else None,
+        "building_directory": str(question.directory.resolve()) if question.directory else None,
+        "inputs": question.inputs,  # Diagnostic ground truth only; never sent to answer_fn.
+        "tool_calls": [{**call, "attempt": trace["attempt"]} for trace in traces for call in trace["tool_calls"]],
+        "usage": dict(usage),
+        "attempt_details": [{key: trace.get(key) for key in
+                             ("attempt", "path", "usage", "responses", "error", "trace_write_error")} for trace in traces],
     }
 
 

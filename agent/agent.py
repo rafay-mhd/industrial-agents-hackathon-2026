@@ -23,6 +23,7 @@ class BuildingAgent(StarterBuildingAgent):
             raise ValueError(f"Unknown agent mode: {mode}")
         super().__init__(building_map, output_directory, client=client)
         self.mode = mode
+        self.responses: list[dict] = []
         self.tools = make_tools(building_map, output_directory)
         prompt = BENCHMARK_PROMPT if mode == "benchmark" else CHAT_PROMPT
         self.system = [{
@@ -30,3 +31,9 @@ class BuildingAgent(StarterBuildingAgent):
             "text": prompt.format(overview=json.dumps(building_map.overview(), ensure_ascii=False)),
             "cache_control": {"type": "ephemeral"},
         }]
+
+    def track_usage(self, message: object) -> None:
+        super().track_usage(message)
+        self.responses.append({"id": getattr(message, "id", None),
+                               "model": getattr(message, "model", None),
+                               "stop_reason": getattr(message, "stop_reason", None)})
