@@ -92,3 +92,54 @@ export function parseFootprint(fp: unknown): AssetFootprint | null {
   }
   return null;
 }
+
+// Route & Chat Types (Section 4.3 Contract)
+export interface RouteAction {
+  type: 'route';
+  length_m: number;
+  steps: string[];
+  floors: Record<string, [number, number][]>;
+}
+
+export interface HighlightAction {
+  type: 'highlight';
+  space_ids?: string[];
+  asset_ids?: string[];
+}
+
+export interface ClosedAction {
+  type: 'closed';
+  element_ids: string[];
+}
+
+export interface DoorAddedAction {
+  type: 'door_added';
+  opening: Opening;
+}
+
+export interface BuildingCreatedAction {
+  type: 'building_created';
+  building_id: string;
+}
+
+export type ChatAction =
+  | RouteAction
+  | HighlightAction
+  | ClosedAction
+  | DoorAddedAction
+  | BuildingCreatedAction;
+
+export interface ChatResponse {
+  reply: string;
+  understood: string | null;
+  needs_clarification: boolean;
+  actions: ChatAction[];
+}
+
+export interface ChatMessage {
+  id: string;
+  sender: 'user' | 'agent';
+  text: string;
+  timestamp: string;
+  response?: ChatResponse;
+}

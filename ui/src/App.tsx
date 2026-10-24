@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
-import type { BuildingData, Space, Opening, Asset } from './types';
+import type { BuildingData, Space, Opening, Asset, RouteAction, ChatResponse } from './types';
 import { parseFootprint } from './types';
 import './App.css';
 
@@ -32,6 +32,24 @@ function getPolygonMetrics(points: [number, number][]): { centroid: [number, num
     centroid: [cx / (6 * signedArea), cy / (6 * signedArea)],
     area,
   };
+}
+
+// 5-Pointed Star Points Generator for Route End Marker
+function getStarPoints(cx: number, cy: number, spikes = 5, outerR = 1.2, innerR = 0.55): string {
+  let rot = (Math.PI / 2) * 3;
+  const step = Math.PI / spikes;
+  const pts: string[] = [];
+  for (let i = 0; i < spikes; i++) {
+    let x = cx + Math.cos(rot) * outerR;
+    let y = cy + Math.sin(rot) * outerR;
+    pts.push(`${x},${y}`);
+    rot += step;
+    x = cx + Math.cos(rot) * innerR;
+    y = cy + Math.sin(rot) * innerR;
+    pts.push(`${x},${y}`);
+    rot += step;
+  }
+  return pts.join(' ');
 }
 
 interface PresetBuilding {
@@ -99,6 +117,12 @@ export default function App() {
   const [showLabels, setShowLabels] = useState(true);
   const [showDoors, setShowDoors] = useState(true);
   const [showAssets, setShowAssets] = useState(true);
+  const [showRoute, setShowRoute] = useState(true);
+
+  // Route State (Step 5)
+  const [activeRoute, setActiveRoute] = useState<RouteAction | null>(null);
+  const [routeUnderstood, setRouteUnderstood] = useState<string | null>(null);
+  const [showRoutePanel, setShowRoutePanel] = useState<boolean>(true);
 
   // Pan and Zoom State
   const [zoom, setZoom] = useState(1.0);
@@ -115,42 +139,68 @@ export default function App() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Load building by ID or URL
-  const loadBuilding = useCallback((buildingId: string) => {
-    setLoading(true);
-    setError(null);
-    const preset = PRESET_BUILDINGS.find((b) => b.id === buildingId);
-    const targetFile = preset ? preset.file : `/buildings/${buildingId}.json`;
-
-    fetch(targetFile)
+  // Load Route Mock from /mock/chat_route.json
+  const loadRouteMock = useCallback(() => {
+    fetch('/mock/chat_route.json')
       .then((res) => {
-        if (!res.ok) {
-          // Fallback to sample.json if preset file not directly mapped
-          return fetch('/sample.json');
-        }
-        return res;
-      })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to load building`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to load route mock`);
         return res.json();
       })
-      .then((json: BuildingData) => {
-        setData(json);
-        setSelectedBuildingId(buildingId);
-        // Default to ground floor (level 0) or first available floor
-        const ground = json.floors.find((f) => f.level === 0) || json.floors[0];
-        if (ground) {
-          setSelectedFloorId(ground.id);
+      .then((res: ChatResponse) => {
+        const routeAction = res.actions.find((a): a is RouteAction => a.type === 'route');
+        if (routeAction) {
+          setActiveRoute(routeAction);
+          setRouteUnderstood(res.understood);
+          setShowRoute(true);
+          setShowRoutePanel(true);
         }
-        setZoom(1.0);
-        setPan({ x: 0, y: 0 });
-        setLoading(false);
       })
-      .catch((err) => {
-        setError(err.message || 'Error loading building data');
-        setLoading(false);
-      });
+      .catch((err) => console.error('Error loading mock route:', err));
   }, []);
+
+  // Load building by ID or URL
+  const loadBuilding = useCallback(
+    (buildingId: string) => {
+      setLoading(true);
+      setError(null);
+      const preset = PRESET_BUILDINGS.find((b) => b.id === buildingId);
+      const targetFile = preset ? preset.file : `/buildings/${buildingId}.json`;
+
+      fetch(targetFile)
+        .then((res) => {
+          if (!res.ok) return fetch('/sample.json');
+          return res;
+        })
+        .then((res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to load building`);
+          return res.json();
+        })
+        .then((json: BuildingData) => {
+          setData(json);
+          setSelectedBuildingId(buildingId);
+          // Default to ground floor (level 0) or first available floor
+          const ground = json.floors.find((f) => f.level === 0) || json.floors[0];
+          if (ground) {
+            setSelectedFloorId(ground.id);
+          }
+          setZoom(1.0);
+          setPan({ x: 0, y: 0 });
+          setLoading(false);
+
+          // If loading factory, auto-load mock route for Step 5
+          if (buildingId === 'proc-factory-dev-003') {
+            loadRouteMock();
+          } else {
+            setActiveRoute(null);
+          }
+        })
+        .catch((err) => {
+          setError(err.message || 'Error loading building data');
+          setLoading(false);
+        });
+    },
+    [loadRouteMock]
+  );
 
   // Initial load
   useEffect(() => {
@@ -181,6 +231,7 @@ export default function App() {
         }
         setZoom(1.0);
         setPan({ x: 0, y: 0 });
+        setActiveRoute(null);
         setLoading(false);
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
@@ -189,7 +240,6 @@ export default function App() {
       }
     };
     reader.readAsText(file);
-    // Reset file input value so re-uploading the same file triggers onChange
     e.target.value = '';
   };
 
@@ -222,7 +272,7 @@ export default function App() {
     return map;
   }, [data]);
 
-  // Openings (doors and entrances) on current floor
+  // Openings on current floor
   const currentOpenings = useMemo(() => {
     if (!data?.openings || !currentFloor) return [];
     return data.openings.filter((o) => o.floor_id === currentFloor.id);
@@ -250,7 +300,6 @@ export default function App() {
   // Compute Bounding Box across all spaces on current floor
   const bounds = useMemo(() => {
     if (currentSpaces.length === 0) {
-      // Fallback: compute from all building spaces if current floor has no spaces yet
       if (data?.spaces && data.spaces.length > 0) {
         let minX = Infinity;
         let maxX = -Infinity;
@@ -347,6 +396,40 @@ export default function App() {
     return `${currentVx} ${currentVy} ${currentW} ${currentH}`;
   }, [baseViewBoxMetrics, zoom, pan]);
 
+  // Route points on the currently displayed floor
+  const currentFloorRoute = useMemo(() => {
+    if (!activeRoute || !currentFloor) return null;
+    const levelKey = String(currentFloor.level);
+    const rawPoints = activeRoute.floors[levelKey];
+    if (!rawPoints || rawPoints.length < 2) return null;
+
+    // Flip Y for route points
+    const flippedPoints = rawPoints.map(([x, y]) => [x, bounds.maxY + bounds.minY - y] as [number, number]);
+    const pointsStr = flippedPoints.map(([x, y]) => `${x},${y}`).join(' ');
+
+    const floorLevels = Object.keys(activeRoute.floors);
+    const isGlobalStartFloor = levelKey === floorLevels[0];
+    const isGlobalEndFloor = levelKey === floorLevels[floorLevels.length - 1];
+
+    const startPoint = flippedPoints[0];
+    const endPoint = flippedPoints[flippedPoints.length - 1];
+
+    return {
+      pointsStr,
+      flippedPoints,
+      isGlobalStartFloor,
+      isGlobalEndFloor,
+      startPoint,
+      endPoint,
+    };
+  }, [activeRoute, currentFloor, bounds]);
+
+  // Route floor keys sorted
+  const routeFloorKeys = useMemo(() => {
+    if (!activeRoute?.floors) return [];
+    return Object.keys(activeRoute.floors).sort((a, b) => Number(a) - Number(b));
+  }, [activeRoute]);
+
   // Pan and Zoom Event Handlers
   const handleWheel = useCallback(
     (e: React.WheelEvent<SVGSVGElement>) => {
@@ -385,7 +468,7 @@ export default function App() {
   );
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (e.button !== 0) return; // Left mouse button only
+    if (e.button !== 0) return;
     setIsDragging(true);
     dragStartRef.current = {
       clientX: e.clientX,
@@ -594,6 +677,25 @@ export default function App() {
           >
             Assets ({currentAssets.length})
           </button>
+          {activeRoute && (
+            <button
+              type="button"
+              className={`layer-toggle-btn ${showRoute ? 'active' : ''}`}
+              onClick={() => setShowRoute(!showRoute)}
+            >
+              Route ({activeRoute.length_m}m)
+            </button>
+          )}
+          {!activeRoute && selectedBuildingId === 'proc-factory-dev-003' && (
+            <button
+              type="button"
+              className="layer-toggle-btn"
+              onClick={loadRouteMock}
+              style={{ color: '#ef4444' }}
+            >
+              Load Route Mock
+            </button>
+          )}
         </div>
 
         {/* Zoom & Fit Floating Controls */}
@@ -610,6 +712,91 @@ export default function App() {
             ⛶
           </button>
         </div>
+
+        {/* Route Side Panel Toggle (if route exists and panel closed) */}
+        {activeRoute && !showRoutePanel && (
+          <button
+            type="button"
+            className="route-toggle-btn"
+            onClick={() => setShowRoutePanel(true)}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <circle cx="12" cy="12" r="10" />
+              <polyline points="12 6 12 12 16 14" />
+            </svg>
+            Route ({activeRoute.length_m} m)
+          </button>
+        )}
+
+        {/* Route Side Panel (Step 5) */}
+        {activeRoute && showRoutePanel && (
+          <aside className="route-panel">
+            <div className="route-panel-header">
+              <div className="route-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2.5">
+                  <path d="M4 19l4-14 4 14" />
+                  <path d="M12 5l4 14 4-14" />
+                </svg>
+                <span>Navigation Route</span>
+                <span className="route-distance-badge">{activeRoute.length_m} m</span>
+              </div>
+              <button
+                type="button"
+                className="close-panel-btn"
+                onClick={() => setShowRoutePanel(false)}
+                title="Hide route panel"
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Floor Navigation Badges (e.g. "0 → 1" that switch floors) */}
+            {routeFloorKeys.length > 1 && (
+              <div className="route-floor-badges">
+                <span style={{ color: 'var(--text-dim)', fontWeight: 600 }}>Floors:</span>
+                {routeFloorKeys.map((lvl, idx) => {
+                  const targetFloor = sortedFloors.find((f) => f.level === Number(lvl));
+                  const isCurrent = currentFloor.level === Number(lvl);
+                  return (
+                    <span key={lvl} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                      {idx > 0 && <span style={{ color: 'var(--text-dim)' }}>→</span>}
+                      <button
+                        type="button"
+                        className={`route-floor-btn ${isCurrent ? 'active' : ''}`}
+                        onClick={() => {
+                          if (targetFloor) setSelectedFloorId(targetFloor.id);
+                        }}
+                      >
+                        L{lvl} {targetFloor ? `(${targetFloor.name})` : ''}
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Understood Summary Chip */}
+            {routeUnderstood && (
+              <div className="route-understood-box">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                  <polyline points="22 4 12 14.01 9 11.01" />
+                </svg>
+                <span>{routeUnderstood}</span>
+              </div>
+            )}
+
+            {/* Numbered Steps */}
+            <div className="route-steps-container">
+              {activeRoute.steps.map((step, idx) => (
+                <div key={idx} className="route-step-row">
+                  <span className="route-step-num">{idx + 1}</span>
+                  <span>{step}</span>
+                </div>
+              ))}
+            </div>
+          </aside>
+        )}
 
         {/* SVG Floor Plan Canvas */}
         <svg
@@ -743,7 +930,6 @@ export default function App() {
                 const entX = ent.position[0];
                 const entY = bounds.maxY + bounds.minY - ent.position[1];
                 const s = entranceSize;
-                // Equilateral-like triangle pointing inwards/upwards
                 const triPoints = `${entX},${entY - s} ${entX - s * 0.866},${entY + s * 0.5} ${entX + s * 0.866},${entY + s * 0.5}`;
 
                 return (
@@ -797,6 +983,51 @@ export default function App() {
                   </text>
                 );
               })}
+            </g>
+          )}
+
+          {/* Layer 5: Route Layer (Step 5) */}
+          {showRoute && currentFloorRoute && (
+            <g id="route-layer">
+              {/* Thick outer casing / glow */}
+              <polyline
+                points={currentFloorRoute.pointsStr}
+                className="route-casing"
+                strokeWidth={strokeWidth * 3.8}
+              />
+
+              {/* Core animated dashing route line */}
+              <polyline
+                points={currentFloorRoute.pointsStr}
+                className="route-core"
+                strokeWidth={strokeWidth * 1.9}
+              />
+
+              {/* Start Dot (if on global start floor) */}
+              {currentFloorRoute.isGlobalStartFloor && (
+                <circle
+                  cx={currentFloorRoute.startPoint[0]}
+                  cy={currentFloorRoute.startPoint[1]}
+                  r={doorRadius * 1.5}
+                  className="route-start-dot"
+                  strokeWidth={strokeWidth * 0.6}
+                />
+              )}
+
+              {/* End Star (if on global destination floor) */}
+              {currentFloorRoute.isGlobalEndFloor && (
+                <polygon
+                  points={getStarPoints(
+                    currentFloorRoute.endPoint[0],
+                    currentFloorRoute.endPoint[1],
+                    5,
+                    entranceSize * 0.9,
+                    entranceSize * 0.45
+                  )}
+                  className="route-end-star"
+                  strokeWidth={strokeWidth * 0.4}
+                />
+              )}
             </g>
           )}
         </svg>

@@ -1,0 +1,75 @@
+{
+  "reply": "Here is the fastest route from Production zone H-A1 to Office 1.11 (132.9 m). Follow the hall access into the ground floor office corridor, take the staircase to Floor 1, and proceed along the corridor to Office 1.11.",
+  "understood": "From Production zone H-A1 to Office 1.11, via Office staircase",
+  "needs_clarification": false,
+  "actions": [
+    {
+      "type": "route",
+      "length_m": 132.9,
+      "steps": [
+        "Start in Production zone H-A1 [proc-factory-dev-003-F0-S001] on Ground floor.",
+        "Walk about 12 m through the door into Hall access 0.19.",
+        "Walk about 35 m through the door into Office corridor 0.16.",
+        "Walk about 35 m through the door into Staircase 0.17.",
+        "Use Office staircase (stairs) to Floor 1.",
+        "Walk about 35 m through the door into Office corridor 1.01.",
+        "Walk about 4 m through the door into Office 1.11.",
+        "You have arrived at Office 1.11 [proc-factory-dev-003-F1-S011] on Floor 1."
+      ],
+      "floors": {
+        "0": [
+          [
+            -7.25,
+            8.55
+          ],
+          [
+            0.0,
+            2.718
+          ],
+          [
+            2.5,
+            2.715
+          ],
+          [
+            5.0,
+            2.718
+          ],
+          [
+            6.0,
+            34.9
+          ],
+          [
+            7.0,
+            2.003
+          ],
+          [
+            9.5,
+            2.0
+          ]
+        ],
+        "1": [
+          [
+            9.5,
+            2.0
+          ],
+          [
+            7.0,
+            2.003
+          ],
+          [
+            6.0,
+            34.9
+          ],
+          [
+            5.0,
+            35.195
+          ],
+          [
+            2.5,
+            35.195
+          ]
+        ]
+      }
+    }
+  ]
+}
