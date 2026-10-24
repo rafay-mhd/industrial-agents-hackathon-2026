@@ -25,6 +25,30 @@ Record: date, commit, model, per-kind answers and extraction, misses with cause,
 
 ---
 
+## 2026-10-24 — kit 1.1.0: corrected route rules, core rebuilt, oracle back at 100%
+
+**Commit**: `f154c95` (merge of the organizers' 1.1.0) + `bfe4d0d` (core routing rewrite). **Run by**: Core owner.
+
+The organizers recomputed 1,314 train/dev answers under their real route rules (see `CHANGELOG.md`): door-to-door
+walking, stairs 2 m per metre climbed, lift 15 m + 1 m per metre, no way round the outside. Before the rewrite our
+core scored 448/517 train and 120/138 dev on the new answers (errand and what-if wrong, all geometry kinds still
+100%) and 22/229 on dev warm-up routes. After rebuilding the routing on the starter's new walking model:
+
+| Set                                   | Questions | Correct  | Time   |
+|---------------------------------------|-----------|----------|--------|
+| Train benchmark, 9 kinds              | 517       | 517      | 7.5 s  |
+| Dev benchmark, 9 kinds                | 138       | 138      | 10.7 s |
+| Train warm-up (locate, count, routes) | 1,761     | 1,761    | 8.1 s  |
+| Dev warm-up, incl. 112 "no route"     | 369       | 369      | 10.6 s |
+| Agent owner's test suite              | 56 tests  | all pass |        |
+
+New in the core: `route_summary()` (ordered spaces, as the judges score routes), `route(forklift=True)`
+(openings ≥ 3 m, bays never crossed), `exit_distances()`; walking lengths shared between instances of a
+building. Every route-related live figure in the entries below was measured against the 1.0.0 answers and is
+historical; the live rerun on 1.1.0 and the test CSV v2 follow in the next entry.
+
+---
+
 ## 2026-10-24 — ambiguity behaviour test, chat mode, all ambiguous train + dev questions
 
 **Commit**: `ceeeee2` + `tests/live_ambiguity.py`. **Model**: `claude-sonnet-5-5`, chat prompt. **Run by**: Core owner.

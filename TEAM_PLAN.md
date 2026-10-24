@@ -91,9 +91,7 @@ openings[]            id, floor_id, space_ids [a, b] ("outside" = entrance), kin
 vertical_connectors[] id, kind (stairs|lift), name, floor_ids[], space_ids[] (one stop space per floor), step_free
 assets[]              id, name ("Desk 2.03-B"), category, type ("cnc_mill"), space_id, floor_id, position, footprint
 ```
-Route model (already in `starter_agent/building_map.py`): one node per space at `Polygon.representative_point()`,
-one node per door at its position, edges space↔door by straight-line distance, stairs 12 m per floor, lift
-15 m + 6 m per floor, all entrances meet at one `outside` node. Step-free routing drops every `step_free: false` edge.
+Route model, **kit 1.1.0 (corrected 24 Oct evening)**: walking inside a space goes door to door, 15 cm off the walls, round corners; stairs cost 2 m per metre climbed; a lift ride 15 m + 1 m per metre; there is no way round the outside. The starter's `building_map.py` implements it and `core/` builds on it (100% on all 1.1.0 answers). 1,314 train/dev answers changed with this fix; questions, buildings and the test questions did not. The hidden building's route questions are graded on the ordered list of spaces passed, validity first, then length within 1%; "no route" is a valid answer; forklift questions use openings ≥ 3 m and treat production bays as destinations only.
 
 ---
 
