@@ -159,6 +159,13 @@ const MOCK_OPTIONS: MockOption[] = [
   },
 ];
 
+interface UserLocation {
+  spaceId: string;
+  spaceName: string;
+  floorId: string;
+  position: [number, number];
+}
+
 type HoveredEntity =
   | { kind: 'space'; space: Space; area: number }
   | { kind: 'asset'; asset: Asset; dimensions?: string }
@@ -189,6 +196,15 @@ export default function App() {
   const [showDoors, setShowDoors] = useState(true);
   const [showAssets, setShowAssets] = useState(true);
   const [showRoute, setShowRoute] = useState(true);
+
+  // User Current Location State
+  const [userLocation, setUserLocation] = useState<UserLocation>({
+    spaceId: 'proc-factory-dev-003-F0-S001',
+    spaceName: 'Production zone H-A1',
+    floorId: 'proc-factory-dev-003-F0',
+    position: [-7.25, 8.55],
+  });
+  const [isSettingLocation, setIsSettingLocation] = useState<boolean>(false);
 
   // Route State (Step 5)
   const [activeRoute, setActiveRoute] = useState<RouteAction | null>(null);
@@ -332,6 +348,19 @@ export default function App() {
           if (ground) {
             setSelectedFloorId(ground.id);
           }
+          const initialSpace =
+            json.spaces?.find((s) => s.floor_id === ground?.id && s.polygon?.length >= 3) ||
+            json.spaces?.[0];
+          if (initialSpace) {
+            const { centroid } = getPolygonMetrics(initialSpace.polygon);
+            const initialName = initialSpace.name || (initialSpace.ref ? `Room ${initialSpace.ref}` : initialSpace.id);
+            setUserLocation({
+              spaceId: initialSpace.id,
+              spaceName: initialName,
+              floorId: initialSpace.floor_id,
+              position: centroid,
+            });
+          }
           setZoom(1.0);
           setPan({ x: 0, y: 0 });
           setHighlightedSpaceIds(new Set());
@@ -399,6 +428,94 @@ export default function App() {
     (text: string) => {
       const lower = text.toLowerCase();
       let mockFile = '/mock/chat_route.json';
+
+      // 0. Manual Location Change Queries & Guidance
+      if (
+        /\b(how (can|do) i (manually )?(change|set|update) (my|the|current) location|change (my )?location)\b/i.test(
+          text
+        )
+      ) {
+        const reply = `You can change your current location in 3 convenient ways:\n1. **Dropdown Selector**: Click the **📍 Location** dropdown in the top header to select any room.\n2. **Map Pin Mode**: Click the **📍 Pin** button in the floating controls on the map, then click directly on any room on the floor plan.\n3. **Chat / Voice Command**: Type or say e.g. *"I am in Office 0.23"* or *"Set location to Room 0.22"*.\n\nYour location beacon (pulsing blue dot) updates instantly and all routes will navigate starting from your new position!`;
+        const res: ChatResponse = {
+          reply,
+          understood: 'How to change location guide',
+          needs_clarification: false,
+          actions: [],
+        };
+        const agentMsg: ChatMessage = {
+          id: `agent-${Date.now()}`,
+          sender: 'agent',
+          text: res.reply,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          response: res,
+        };
+        setMessages((prev) => [...prev, agentMsg]);
+        if (res.understood) setRouteUnderstood(res.understood);
+        speakText('You can change your location using the header dropdown, the map pin button, or by saying I am in room name.');
+        return;
+      }
+
+      const locationMatch = text.match(
+        /\b(?:i am in|i am at|i'm in|i'm at|my location is|set my location to|set location to|move me to|change location to|current location is)\s+(?:the\s+)?(.+)/i
+      );
+      if (locationMatch) {
+        const targetQuery = locationMatch[1].trim().toLowerCase().replace(/[.!?]+$/, '');
+        const matchedSpace = data?.spaces?.find((s) => {
+          const sName = (s.name || '').toLowerCase();
+          const sRef = (s.ref || '').toLowerCase();
+          const sId = (s.id || '').toLowerCase();
+          return (
+            sName === targetQuery ||
+            sRef === targetQuery ||
+            sName.includes(targetQuery) ||
+            (targetQuery.length >= 3 && sRef.includes(targetQuery)) ||
+            targetQuery.includes(sRef) ||
+            sId.includes(targetQuery)
+          );
+        });
+
+        if (matchedSpace) {
+          const { centroid } = getPolygonMetrics(matchedSpace.polygon);
+          const spaceLabel =
+            matchedSpace.name || (matchedSpace.ref ? `Room ${matchedSpace.ref}` : matchedSpace.id);
+          setUserLocation({
+            spaceId: matchedSpace.id,
+            spaceName: spaceLabel,
+            floorId: matchedSpace.floor_id,
+            position: centroid,
+          });
+          if (matchedSpace.floor_id !== selectedFloorId) {
+            setSelectedFloorId(matchedSpace.floor_id);
+          }
+          const targetFloor = data?.floors?.find((f) => f.id === matchedSpace.floor_id);
+          const floorLabel = targetFloor ? targetFloor.name : 'Floor';
+          const reply = `Your location has been updated to **${spaceLabel}** on ${floorLabel}. All route calculations will now start from here.`;
+          const res: ChatResponse = {
+            reply,
+            understood: `Current location updated to: ${spaceLabel}`,
+            needs_clarification: false,
+            actions: [
+              {
+                type: 'highlight',
+                space_ids: [matchedSpace.id],
+              },
+            ],
+          };
+          const agentMsg: ChatMessage = {
+            id: `agent-${Date.now()}`,
+            sender: 'agent',
+            text: res.reply,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            response: res,
+          };
+          setMessages((prev) => [...prev, agentMsg]);
+          if (res.understood) setRouteUnderstood(res.understood);
+          applyActions(res.actions);
+          speakText(`Location updated to ${spaceLabel}`);
+          return;
+        }
+      }
+
       // Ensure "closest" or "closet" does NOT falsely trigger the closure handler
       const hasCloseWord =
         /\b(closed|close|shut|broken|out of order|maintenance)\b/i.test(text) ||
@@ -510,7 +627,8 @@ export default function App() {
         });
 
         if (candidateExits.length > 0) {
-          const startPt: [number, number] = [-7.25, 8.55];
+          const startPt: [number, number] = userLocation ? userLocation.position : [-7.25, 8.55];
+          const currentLocName = userLocation ? userLocation.spaceName : 'Production zone H-A1';
 
           candidateExits.sort((a, b) => {
             const aGround = a.floor_id === groundFloor?.id ? 0 : 1;
@@ -575,7 +693,7 @@ export default function App() {
                 `Head straight to ${exitLabel} to exit the building.`,
               ]
             : [
-                `Start in Production zone H-A1 on ${floorName}.`,
+                `Start in ${currentLocName} on ${floorName}.`,
                 isStepFree
                   ? `Follow the level, step-free passage toward ${exitRoomName}.`
                   : `Proceed toward ${exitRoomName}.`,
@@ -718,8 +836,9 @@ export default function App() {
             const aOnCurrent = a.floor_id === currentFloorId ? 0 : 1;
             const bOnCurrent = b.floor_id === currentFloorId ? 0 : 1;
             if (aOnCurrent !== bOnCurrent) return aOnCurrent - bOnCurrent;
-            const da = (a.position[0] - -7.25) ** 2 + (a.position[1] - 8.55) ** 2;
-            const db = (b.position[0] - -7.25) ** 2 + (b.position[1] - 8.55) ** 2;
+            const userPt = userLocation ? userLocation.position : [-7.25, 8.55];
+            const da = (a.position[0] - userPt[0]) ** 2 + (a.position[1] - userPt[1]) ** 2;
+            const db = (b.position[0] - userPt[0]) ** 2 + (b.position[1] - userPt[1]) ** 2;
             return da - db;
           });
           matchedAsset = matchingAssets[0];
@@ -775,7 +894,7 @@ export default function App() {
           }
         }
 
-        // Sort candidate rooms by current floor first, then distance from user's current location [-7.25, 8.55]
+        // Sort candidate rooms by current floor first, then distance from user's current location
         candidateRooms.sort((a, b) => {
           if (targetRef) {
             if (a.ref?.toLowerCase() === targetRef) return -1;
@@ -786,8 +905,9 @@ export default function App() {
           if (aOnCurrent !== bOnCurrent) return aOnCurrent - bOnCurrent;
           const ca = getPolygonMetrics(a.polygon).centroid;
           const cb = getPolygonMetrics(b.polygon).centroid;
-          const da = (ca[0] - -7.25) ** 2 + (ca[1] - 8.55) ** 2;
-          const db = (cb[0] - -7.25) ** 2 + (cb[1] - 8.55) ** 2;
+          const userPt = userLocation ? userLocation.position : [-7.25, 8.55];
+          const da = (ca[0] - userPt[0]) ** 2 + (ca[1] - userPt[1]) ** 2;
+          const db = (cb[0] - userPt[0]) ** 2 + (cb[1] - userPt[1]) ** 2;
           return da - db;
         });
 
@@ -828,10 +948,8 @@ export default function App() {
               setSelectedFloorId(floorId);
             }
 
-            const startPt: [number, number] = [-7.25, 8.55];
-            const midPt1: [number, number] = [0.0, 2.718];
-            const midPt2: [number, number] = [5.0, 2.718];
-            const midPt3: [number, number] = [5.0, destPt[1]];
+            const startPt: [number, number] = userLocation ? userLocation.position : [-7.25, 8.55];
+            const currentLocName = userLocation ? userLocation.spaceName : 'Production zone H-A1';
 
             const dx = destPt[0] - startPt[0];
             const dy = destPt[1] - startPt[1];
@@ -839,6 +957,20 @@ export default function App() {
               Math.round(Math.sqrt(dx * dx + dy * dy) * 1.2),
               15
             );
+
+            const waypoints: [number, number][] = [startPt];
+            if (startPt[0] < -5 && destPt[0] > 0) {
+              waypoints.push([0.0, 2.718]);
+              waypoints.push([5.0, 2.718]);
+              waypoints.push([5.0, destPt[1]]);
+            } else if (startPt[0] > 0 && destPt[0] < -5) {
+              waypoints.push([5.0, startPt[1]]);
+              waypoints.push([5.0, 2.718]);
+              waypoints.push([0.0, 2.718]);
+            } else {
+              waypoints.push([(startPt[0] + destPt[0]) / 2, (startPt[1] + destPt[1]) / 2]);
+            }
+            waypoints.push(destPt);
 
             const label = matchedAsset ? matchedAsset.name : roomName;
             const replyText = matchedAsset
@@ -863,13 +995,13 @@ export default function App() {
                   type: 'route',
                   length_m: approxDist,
                   steps: [
-                    `Start in Production zone H-A1 on ${floorName}.`,
-                    `Walk through the door into Hall access 0.19.`,
-                    `Pass into Office corridor 0.16.`,
+                    `Start in ${currentLocName} on ${floorName}.`,
+                    `Proceed toward the hallway corridor.`,
+                    `Follow directions to ${label}.`,
                     `Arrive at ${label}.`,
                   ],
                   floors: {
-                    [floorLvl]: [startPt, midPt1, midPt2, midPt3, destPt],
+                    [floorLvl]: waypoints,
                   },
                 },
               ],
@@ -972,7 +1104,7 @@ export default function App() {
         })
         .catch((err) => console.error('Error fetching mock response:', err));
     },
-    [data, applyActions, speakText]
+    [data, userLocation, applyActions, speakText]
   );
 
   // Pick a mock response from dropdown or quick chips
@@ -1169,6 +1301,19 @@ export default function App() {
         const ground = parsed.floors.find((f) => f.level === 0) || parsed.floors[0];
         if (ground) {
           setSelectedFloorId(ground.id);
+        }
+        const initialSpace =
+          parsed.spaces?.find((s) => s.floor_id === ground?.id && s.polygon?.length >= 3) ||
+          parsed.spaces?.[0];
+        if (initialSpace) {
+          const { centroid } = getPolygonMetrics(initialSpace.polygon);
+          const initialName = initialSpace.name || (initialSpace.ref ? `Room ${initialSpace.ref}` : initialSpace.id);
+          setUserLocation({
+            spaceId: initialSpace.id,
+            spaceName: initialName,
+            floorId: initialSpace.floor_id,
+            position: centroid,
+          });
         }
         setZoom(1.0);
         setPan({ x: 0, y: 0 });
@@ -1642,6 +1787,58 @@ export default function App() {
             </label>
           </div>
 
+          {/* Current Location Selector */}
+          <div className="location-picker-group" title="Change your current starting location">
+            <span>📍 Location:</span>
+            <select
+              aria-label="Select Current Location"
+              value={userLocation.spaceId}
+              onChange={(e) => {
+                const targetId = e.target.value;
+                const sp = data.spaces.find((s) => s.id === targetId);
+                if (sp) {
+                  const { centroid } = getPolygonMetrics(sp.polygon);
+                  const sLabel = sp.name || (sp.ref ? `Room ${sp.ref}` : sp.id);
+                  setUserLocation({
+                    spaceId: sp.id,
+                    spaceName: sLabel,
+                    floorId: sp.floor_id,
+                    position: centroid,
+                  });
+                  if (sp.floor_id !== selectedFloorId) {
+                    setSelectedFloorId(sp.floor_id);
+                  }
+                  const confirmMsg: ChatMessage = {
+                    id: `agent-loc-${Date.now()}`,
+                    sender: 'agent',
+                    text: `Your current location has been updated to **${sLabel}**.`,
+                    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                  };
+                  setMessages((prev) => [...prev, confirmMsg]);
+                  speakText(`Location set to ${sLabel}`);
+                }
+              }}
+              className="location-select"
+            >
+              {data.floors.map((floor) => {
+                const floorSpaces = data.spaces.filter((s) => s.floor_id === floor.id);
+                if (floorSpaces.length === 0) return null;
+                return (
+                  <optgroup key={floor.id} label={`Floor ${floor.level} (${floor.name})`}>
+                    {floorSpaces.map((sp) => {
+                      const label = sp.name ? `${sp.name} (${sp.ref || sp.type})` : (sp.ref ? `Room ${sp.ref}` : sp.id);
+                      return (
+                        <option key={sp.id} value={sp.id}>
+                          {label}
+                        </option>
+                      );
+                    })}
+                  </optgroup>
+                );
+              })}
+            </select>
+          </div>
+
           <div className="building-title-group">
             <h1 className="building-name">{data.building.name}</h1>
             <div className="building-meta">
@@ -1737,6 +1934,19 @@ export default function App() {
           )}
         </div>
 
+        {isSettingLocation && (
+          <div className="setting-location-banner">
+            <span>📍 Click any room on the floor plan to set your current location</span>
+            <button
+              type="button"
+              className="banner-cancel-btn"
+              onClick={() => setIsSettingLocation(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+
         {/* Zoom & Fit Floating Controls */}
         <div className="floating-controls">
           <button type="button" className="control-btn" onClick={handleZoomIn} title="Zoom In (+)">
@@ -1749,6 +1959,16 @@ export default function App() {
           <div className="control-divider" />
           <button type="button" className="control-btn" onClick={handleResetView} title="Fit to View">
             ⛶
+          </button>
+          <div className="control-divider" />
+          <button
+            type="button"
+            className={`control-btn ${isSettingLocation ? 'active' : ''}`}
+            onClick={() => setIsSettingLocation(!isSettingLocation)}
+            title={isSettingLocation ? 'Cancel Pin Mode' : 'Click to Set Current Location on Map'}
+            aria-label="Set Current Location"
+          >
+            📍 Pin
           </button>
           <div className="control-divider" />
           <button
@@ -1980,6 +2200,25 @@ export default function App() {
                   strokeWidth={strokeWidth}
                   onClick={(e) => {
                     e.stopPropagation();
+                    if (isSettingLocation) {
+                      const { centroid } = getPolygonMetrics(space.polygon);
+                      setUserLocation({
+                        spaceId: space.id,
+                        spaceName: spaceLabel,
+                        floorId: space.floor_id,
+                        position: centroid,
+                      });
+                      setIsSettingLocation(false);
+                      const confirmMsg: ChatMessage = {
+                        id: `agent-loc-${Date.now()}`,
+                        sender: 'agent',
+                        text: `Your current location has been updated to **${spaceLabel}**.`,
+                        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                      };
+                      setMessages((prev) => [...prev, confirmMsg]);
+                      speakText(`Location set to ${spaceLabel}`);
+                      return;
+                    }
                     handleToggleElementClosure(space.id, spaceLabel, isClosed);
                   }}
                   onMouseEnter={(e) => {
@@ -2219,6 +2458,32 @@ export default function App() {
                   strokeWidth={strokeWidth * 0.4}
                 />
               )}
+            </g>
+          )}
+
+          {/* Layer 6: User Location Beacon */}
+          {userLocation && userLocation.floorId === selectedFloorId && (
+            <g id="user-location-marker">
+              <circle
+                cx={userLocation.position[0]}
+                cy={bounds.maxY + bounds.minY - userLocation.position[1]}
+                className="user-location-pulse"
+              />
+              <circle
+                cx={userLocation.position[0]}
+                cy={bounds.maxY + bounds.minY - userLocation.position[1]}
+                r={doorRadius * 1.5}
+                strokeWidth={strokeWidth * 0.8}
+                className="user-location-core"
+              />
+              <text
+                x={userLocation.position[0]}
+                y={bounds.maxY + bounds.minY - userLocation.position[1] - doorRadius * 2.0}
+                fontSize={doorRadius * 1.4}
+                className="user-location-label"
+              >
+                📍 You ({userLocation.spaceName})
+              </text>
             </g>
           )}
         </svg>
