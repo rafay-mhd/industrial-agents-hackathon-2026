@@ -86,12 +86,20 @@ available if ElevenLabs fails. Audio is processed per request and not permanentl
 - Real residential flow: `resplan-1465`, “Living room 0.01” → **82.13 m²**, spoken output 70,260 bytes.
 - Real large Swiss flow after vocabulary fix: `swiss-5097`, “Bedroom -1.02 in Apartment 1” →
   **14.53 m²**, spoken output 46,436 bytes. Both answers were checked against Core.
-- These audio inputs were generated speech. They verify the service chain, not noisy live-microphone
-  recognition. The user was asked to verify the actual microphone with an accessible factory route
-  and a same-session destination change; that hardware check is tracked separately in PROGRESS.md.
+- The user also tested two spoken requests in the browser: wheelchair route from Warehouse zone
+  H-C2 to Office 1.20, then Kitchen 0.28 instead. Observed answers/actions were **151.1 m** and
+  **53.87 m**, with the original Warehouse start and step-free need retained. Both live input/chat/TTS
+  chains returned 200 and the browser showed playable audio and playback progress. The first transcript included
+  a spoken correction; the agent still resolved the intended start correctly.
+- The three area-test inputs were generated speech. The two user route turns add real-user evidence,
+  but none of these checks guarantees recognition for every accent, noise level or room identifier.
 - The 280-building check validates vocabulary/request construction; it is not 280 live speech tests.
 
 Local generated test audio and JSON evidence are ignored under `agent_output/voice/`. Run offline
 checks with `uv run --frozen python -m unittest discover -s agent/tests -q` and
 `uv run --frozen python -m core.oracle_check data/dev`. Full Step 12 live dev result: **138/138**;
 test submission v2 has 145 answers with no supplied test answer key.
+
+The final server runs on port 8012. Its restart after the user's test starts fresh in-memory sessions.
+The clean-clone rehearsal installed the frozen dependencies, passed all 67 tests, and scored 5/5 on
+the documented factory benchmark. See PROGRESS.md for evidence and remaining team integration work.

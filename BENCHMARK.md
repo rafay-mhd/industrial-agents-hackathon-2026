@@ -145,3 +145,7 @@ Configure `.env` as above (or securely copy your existing local file), then run 
 command and report command from this document. Do not copy the original `.venv` or source files.
 If a restricted environment cannot write normal cache directories, use writable `UV_CACHE_DIR` and
 `MPLCONFIGDIR` locations; these settings do not change the agent or its answers.
+
+Step 12 repeated this rehearsal from a clean local clone of `d843931`: frozen sync **0.49 s**, all
+**67 offline tests passed**, documented factory benchmark **5/5 in 5.31 s**, extraction **5/5**.
+The working tree remained clean and the temporary credential file was removed after the checks.
