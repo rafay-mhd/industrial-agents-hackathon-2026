@@ -25,6 +25,22 @@ Record: date, commit, model, per-kind answers and extraction, misses with cause,
 
 ---
 
+## 2026-10-24 — live rerun on kit 1.1.0 and test submission v2
+
+**Commit**: `bfe4d0d` core + Agent layer unchanged. **Model**: `claude-sonnet-5-5`, benchmark prompt, `--no-kind-hints`, 4 workers. **Run by**: Core owner.
+
+| Set                                    | Answers                    | Extraction | Time  | Approx. cost |
+|----------------------------------------|----------------------------|------------|-------|--------------|
+| Dev benchmark, all 138                 | 138 / 138                  | 138 / 138  | 3 min | $2           |
+| Test, all 145 (no answers, submission) | 145 rows, 145 Answer lines |            | 3 min | $2           |
+
+Every dev kind at 100%, one tool call per question, no retries. `submissions/team_simran_v2.csv` validated: all 145 ids,
+no row without an Answer line, exactly one number on numeric kinds, no `m2`. Compared with v1, exactly the lines the
+rule change affects differ: all 20 errand answers and 1 of the 3 what-if answers (the other two happen to be unchanged).
+The 87 geometry answers are identical to v1. **v2 is the file to submit; v1 is kept only for the record.**
+
+---
+
 ## 2026-10-24 — kit 1.1.0: corrected route rules, core rebuilt, oracle back at 100%
 
 **Commit**: `f154c95` (merge of the organizers' 1.1.0) + `bfe4d0d` (core routing rewrite). **Run by**: Core owner.
