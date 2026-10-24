@@ -12,6 +12,24 @@ import type {
 import { parseFootprint } from './types';
 import './App.css';
 
+const SERVER_URL = 'http://localhost:8000';
+
+function getSessionId(): string {
+  let sid = sessionStorage.getItem('building_agent_session_id');
+  if (!sid) {
+    sid = 'sess_' + Math.random().toString(36).substring(2, 11);
+    sessionStorage.setItem('building_agent_session_id', sid);
+  }
+  return sid;
+}
+
+interface ServerBuildingSummary {
+  id: string;
+  name: string;
+  source: string;
+  floors?: { level: number; name: string }[];
+}
+
 // Polygon Centroid and Area calculation using Shoelace formula
 function getPolygonMetrics(points: [number, number][]): { centroid: [number, number]; area: number } {
   let areaSum = 0;
@@ -131,7 +149,7 @@ const MOCK_OPTIONS: MockOption[] = [
     id: 'chat_highlight',
     label: 'Highlight CNC Mill',
     file: '/mock/chat_highlight.json',
-    prompt: 'Where is CNC mill H-A1-A?',
+    prompt: 'Where is the cnc mill?',
   },
   {
     id: 'chat_door_added',
@@ -151,6 +169,10 @@ export default function App() {
   const [data, setData] = useState<BuildingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Live Server Status (Step 7)
+  const [serverOnline, setServerOnline] = useState<boolean>(false);
+  const [serverBuildings, setServerBuildings] = useState<ServerBuildingSummary[]>([]);
 
   // Active Building Selection
   const [selectedBuildingId, setSelectedBuildingId] = useState<string>('proc-factory-dev-003');
@@ -234,6 +256,126 @@ export default function App() {
     }
   }, []);
 
+  // Check Live Server Connection (Step 7)
+  const checkServer = useCallback(() => {
+    fetch(`${SERVER_URL}/buildings`)
+      .then((res) => {
+        if (!res.ok) throw new Error('Live server unreachable');
+        return res.json();
+      })
+      .then((bList: ServerBuildingSummary[]) => {
+        setServerOnline(true);
+        if (Array.isArray(bList) && bList.length > 0) {
+          setServerBuildings(bList);
+        }
+      })
+      .catch(() => {
+        setServerOnline(false);
+      });
+  }, []);
+
+  useEffect(() => {
+    checkServer();
+    const timer = setInterval(checkServer, 10000);
+    return () => clearInterval(timer);
+  }, [checkServer]);
+
+  // Load building by ID or URL (Step 7: GET /buildings/{id} replaces static files when online)
+  const loadBuilding = useCallback(
+    (buildingId: string) => {
+      setLoading(true);
+      setError(null);
+
+      const fetchPromise = serverOnline
+        ? fetch(`${SERVER_URL}/buildings/${buildingId}`)
+            .then((res) => {
+              if (!res.ok) throw new Error('Live server building fetch error');
+              return res.json();
+            })
+            .catch(() => {
+              const preset = PRESET_BUILDINGS.find((b) => b.id === buildingId);
+              const targetFile = preset ? preset.file : `/buildings/${buildingId}.json`;
+              return fetch(targetFile).then((r) => r.json());
+            })
+        : (() => {
+            const preset = PRESET_BUILDINGS.find((b) => b.id === buildingId);
+            const targetFile = preset ? preset.file : `/buildings/${buildingId}.json`;
+            return fetch(targetFile)
+              .then((r) => {
+                if (!r.ok) return fetch('/sample.json');
+                return r;
+              })
+              .then((r) => r.json());
+          })();
+
+      fetchPromise
+        .then((json: BuildingData) => {
+          setData(json);
+          setSelectedBuildingId(buildingId);
+          const ground = json.floors.find((f) => f.level === 0) || json.floors[0];
+          if (ground) {
+            setSelectedFloorId(ground.id);
+          }
+          setZoom(1.0);
+          setPan({ x: 0, y: 0 });
+          setHighlightedSpaceIds(new Set());
+          setHighlightedAssetIds(new Set());
+          setClosedElementIds(new Set());
+          setAddedDoors([]);
+          setLoading(false);
+        })
+        .catch((err) => {
+          setError(err.message || 'Error loading building data');
+          setLoading(false);
+        });
+    },
+    [serverOnline]
+  );
+
+  // Initial load
+  useEffect(() => {
+    loadBuilding('proc-factory-dev-003');
+  }, [loadBuilding]);
+
+  // Fallback Mock Dispatcher
+  const fallbackMockDispatch = useCallback(
+    (text: string) => {
+      const lower = text.toLowerCase();
+      let mockFile = '/mock/chat_route.json';
+      if (lower.includes('close') || lower.includes('shut') || lower.includes('broken')) {
+        mockFile = '/mock/chat_closed.json';
+      } else if (
+        lower.includes('where') ||
+        lower.includes('find') ||
+        lower.includes('cnc') ||
+        lower.includes('mill')
+      ) {
+        mockFile = '/mock/chat_highlight.json';
+      } else if (lower.includes('door') || lower.includes('add') || lower.includes('wall')) {
+        mockFile = '/mock/chat_door_added.json';
+      } else if (lower.includes('?') || lower.includes('office') || lower.includes('printer')) {
+        mockFile = '/mock/chat_clarify.json';
+      }
+
+      fetch(mockFile)
+        .then((res) => res.json())
+        .then((res: ChatResponse) => {
+          const agentMsg: ChatMessage = {
+            id: `agent-${Date.now()}`,
+            sender: 'agent',
+            text: res.reply,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            response: res,
+          };
+          setMessages((prev) => [...prev, agentMsg]);
+          if (res.understood) setRouteUnderstood(res.understood);
+          applyActions(res.actions);
+        })
+        .catch((err) => console.error('Error fetching mock response:', err));
+    },
+    [applyActions]
+  );
+
   // Pick a mock response from dropdown or quick chips
   const handleSelectMock = useCallback(
     (mockId: string) => {
@@ -269,7 +411,7 @@ export default function App() {
     [applyActions]
   );
 
-  // Send message on Enter or click
+  // Send message on Enter or click (Step 7: POST /buildings/{id}/chat replaces mocks when online)
   const handleSendMessage = useCallback(() => {
     if (!inputQuery.trim()) return;
     const text = inputQuery.trim();
@@ -284,88 +426,39 @@ export default function App() {
     };
     setMessages((prev) => [...prev, userMsg]);
 
-    // Choose appropriate mock based on query keywords
-    const lower = text.toLowerCase();
-    let mockFile = '/mock/chat_route.json';
-    if (lower.includes('close') || lower.includes('shut') || lower.includes('repair')) {
-      mockFile = '/mock/chat_closed.json';
-    } else if (lower.includes('where') || lower.includes('find') || lower.includes('cnc') || lower.includes('mill')) {
-      mockFile = '/mock/chat_highlight.json';
-    } else if (lower.includes('door') || lower.includes('add') || lower.includes('wall')) {
-      mockFile = '/mock/chat_door_added.json';
-    } else if (lower.includes('?') || lower.includes('office') || lower.includes('printer')) {
-      mockFile = '/mock/chat_clarify.json';
-    }
-
-    fetch(mockFile)
-      .then((res) => res.json())
-      .then((res: ChatResponse) => {
-        const agentMsg: ChatMessage = {
-          id: `agent-${Date.now()}`,
-          sender: 'agent',
-          text: res.reply,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          response: res,
-        };
-        setMessages((prev) => [...prev, agentMsg]);
-        if (res.understood) setRouteUnderstood(res.understood);
-        applyActions(res.actions);
+    if (serverOnline) {
+      fetch(`${SERVER_URL}/buildings/${selectedBuildingId}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: getSessionId(),
+          message: text,
+        }),
       })
-      .catch((err) => console.error('Error in chat response:', err));
-  }, [inputQuery, applyActions]);
-
-  // Load building by ID or URL
-  const loadBuilding = useCallback(
-    (buildingId: string) => {
-      setLoading(true);
-      setError(null);
-      const preset = PRESET_BUILDINGS.find((b) => b.id === buildingId);
-      const targetFile = preset ? preset.file : `/buildings/${buildingId}.json`;
-
-      fetch(targetFile)
         .then((res) => {
-          if (!res.ok) return fetch('/sample.json');
-          return res;
-        })
-        .then((res) => {
-          if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to load building`);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.json();
         })
-        .then((json: BuildingData) => {
-          setData(json);
-          setSelectedBuildingId(buildingId);
-          // Default to ground floor (level 0) or first available floor
-          const ground = json.floors.find((f) => f.level === 0) || json.floors[0];
-          if (ground) {
-            setSelectedFloorId(ground.id);
-          }
-          setZoom(1.0);
-          setPan({ x: 0, y: 0 });
-          setHighlightedSpaceIds(new Set());
-          setHighlightedAssetIds(new Set());
-          setClosedElementIds(new Set());
-          setAddedDoors([]);
-          setLoading(false);
-
-          // If factory, trigger initial route demo
-          if (buildingId === 'proc-factory-dev-003') {
-            handleSelectMock('chat_route');
-          } else {
-            setActiveRoute(null);
-          }
+        .then((res: ChatResponse) => {
+          const agentMsg: ChatMessage = {
+            id: `agent-${Date.now()}`,
+            sender: 'agent',
+            text: res.reply,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            response: res,
+          };
+          setMessages((prev) => [...prev, agentMsg]);
+          if (res.understood) setRouteUnderstood(res.understood);
+          applyActions(res.actions);
         })
         .catch((err) => {
-          setError(err.message || 'Error loading building data');
-          setLoading(false);
+          console.warn('Live chat failed, using fallback mock dispatch:', err);
+          fallbackMockDispatch(text);
         });
-    },
-    [handleSelectMock]
-  );
-
-  // Initial load
-  useEffect(() => {
-    loadBuilding('proc-factory-dev-003');
-  }, [loadBuilding]);
+    } else {
+      fallbackMockDispatch(text);
+    }
+  }, [inputQuery, serverOnline, selectedBuildingId, applyActions, fallbackMockDispatch]);
 
   // Handle Custom File Upload
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -573,7 +666,6 @@ export default function App() {
     const rawPoints = activeRoute.floors[levelKey];
     if (!rawPoints || rawPoints.length < 2) return null;
 
-    // Flip Y for route points
     const flippedPoints = rawPoints.map(([x, y]) => [x, bounds.maxY + bounds.minY - y] as [number, number]);
     const pointsStr = flippedPoints.map(([x, y]) => `${x},${y}`).join(' ');
 
@@ -734,6 +826,20 @@ export default function App() {
             Talk to Your Building
           </div>
 
+          {/* Connection Status Pill (Live Server vs Mock Mode) */}
+          <div
+            className={`connection-status-pill ${serverOnline ? 'online' : 'offline'}`}
+            onClick={checkServer}
+            title={
+              serverOnline
+                ? 'Connected to live agent server on localhost:8000'
+                : 'Agent server offline — Click to retry connection to localhost:8000'
+            }
+          >
+            <span className="status-dot-pulse" />
+            <span>{serverOnline ? 'Live Server (8000)' : 'Mock Mode'}</span>
+          </div>
+
           {/* Building Selector Dropdown & File Picker */}
           <div className="building-picker-group">
             <select
@@ -742,14 +848,21 @@ export default function App() {
               onChange={(e) => loadBuilding(e.target.value)}
               className="building-select"
             >
-              {PRESET_BUILDINGS.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name} ({b.badge})
-                </option>
-              ))}
-              {!PRESET_BUILDINGS.some((b) => b.id === selectedBuildingId) && (
-                <option value={selectedBuildingId}>Custom: {data.building.name}</option>
-              )}
+              {serverOnline && serverBuildings.length > 0
+                ? serverBuildings.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name} ({b.source})
+                    </option>
+                  ))
+                : PRESET_BUILDINGS.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name} ({b.badge})
+                    </option>
+                  ))}
+              {!PRESET_BUILDINGS.some((b) => b.id === selectedBuildingId) &&
+                !serverBuildings.some((b) => b.id === selectedBuildingId) && (
+                  <option value={selectedBuildingId}>Custom: {data.building.name}</option>
+                )}
             </select>
 
             {/* Custom JSON File Upload */}
@@ -969,7 +1082,6 @@ export default function App() {
           {/* Layer 1: Space Polygons */}
           <g id="spaces-layer">
             {currentSpaces.map((space) => {
-              // Flip Y coordinate: screen Y = (maxY + minY) - y
               const flippedPointsStr = space.polygon
                 .map(([x, y]) => {
                   const flippedY = bounds.maxY + bounds.minY - y;
@@ -980,7 +1092,7 @@ export default function App() {
               const typeClass = `type-${space.type.toLowerCase()}`;
               const { area } = getPolygonMetrics(space.polygon);
 
-              // Step 6: Action effects on spaces (closed red fill, highlight pulse)
+              // Step 6 & 7: Action effects on spaces
               const isClosed = closedElementIds.has(space.id);
               const isHighlighted = highlightedSpaceIds.has(space.id);
 
@@ -1004,7 +1116,7 @@ export default function App() {
             })}
           </g>
 
-          {/* Layer 2: Assets / Furniture (small rotated rectangles from footprint) */}
+          {/* Layer 2: Assets / Furniture */}
           {showAssets && (
             <g id="assets-layer">
               {currentAssets.map((asset) => {
@@ -1026,7 +1138,7 @@ export default function App() {
                   categoryClass = 'asset-storage';
                 }
 
-                // Step 6: Action highlight pulse on assets
+                // Step 6 & 7: Action highlight pulse on assets
                 const isAssetHighlighted = highlightedAssetIds.has(asset.id);
 
                 return (
@@ -1059,10 +1171,9 @@ export default function App() {
             </g>
           )}
 
-          {/* Layer 3: Openings (Doors as dots, Entrances as triangles, Added Doors as green dots) */}
+          {/* Layer 3: Openings (Doors, Entrances, Added Doors) */}
           {showDoors && (
             <g id="openings-layer">
-              {/* Existing Doors: small dots at position */}
               {doors.map((door) => {
                 const doorX = door.position[0];
                 const doorY = bounds.maxY + bounds.minY - door.position[1];
@@ -1092,7 +1203,7 @@ export default function App() {
                 );
               })}
 
-              {/* Added Doors (Step 6: new dot, green) */}
+              {/* Added Doors (Step 6 & 7: new dot, green) */}
               {currentAddedDoors.map((door) => {
                 const doorX = door.position[0];
                 const doorY = bounds.maxY + bounds.minY - door.position[1];
@@ -1122,7 +1233,7 @@ export default function App() {
                 );
               })}
 
-              {/* Entrances: triangles at position */}
+              {/* Entrances */}
               {entrances.map((ent) => {
                 const entX = ent.position[0];
                 const entY = bounds.maxY + bounds.minY - ent.position[1];
@@ -1291,7 +1402,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Floating Chat Panel (Step 6) */}
+        {/* Floating Chat Panel (Step 6 & 7) */}
         <div className={`chat-panel-container ${chatMinimized ? 'minimized' : ''}`}>
           <div className="chat-header" onClick={() => chatMinimized && setChatMinimized(false)}>
             <div className="chat-title-group">
