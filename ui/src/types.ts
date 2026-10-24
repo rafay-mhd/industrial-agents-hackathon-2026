@@ -43,6 +43,7 @@ export interface Opening {
   position: [number, number];
   width_m?: number;
   step_free?: boolean;
+  synthetic?: boolean;
 }
 
 export interface VerticalConnector {
@@ -54,6 +55,12 @@ export interface VerticalConnector {
   step_free?: boolean;
 }
 
+export interface AssetFootprint {
+  width_m: number;
+  depth_m: number;
+  rotation_deg: number;
+}
+
 export interface Asset {
   id: string;
   name: string;
@@ -62,5 +69,26 @@ export interface Asset {
   space_id: string;
   floor_id: string;
   position: [number, number];
-  footprint?: [number, number, number];
+  footprint?: AssetFootprint | [number, number, number];
+  source?: string;
+}
+
+export function parseFootprint(fp: unknown): AssetFootprint | null {
+  if (!fp) return null;
+  if (typeof fp === 'object' && fp !== null && 'width_m' in fp) {
+    const o = fp as { width_m: number; depth_m: number; rotation_deg?: number };
+    return {
+      width_m: Number(o.width_m) || 1,
+      depth_m: Number(o.depth_m) || 1,
+      rotation_deg: Number(o.rotation_deg) || 0,
+    };
+  }
+  if (Array.isArray(fp) && fp.length >= 2) {
+    return {
+      width_m: Number(fp[0]) || 1,
+      depth_m: Number(fp[1]) || 1,
+      rotation_deg: Number(fp[2]) || 0,
+    };
+  }
+  return null;
 }
