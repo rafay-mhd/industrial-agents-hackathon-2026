@@ -23,6 +23,10 @@ browser-to-API run with the teammate UI is still pending; HTTP and Core integrat
 - `GET /buildings/{id}`: raw original building JSON for rendering. Unknown IDs return 404.
 - `POST /buildings/{id}/chat`: `{session_id,message}` → `{reply,understood,needs_clarification,actions}`.
   Blank inputs return 422. Reuse a session ID to continue; a new ID starts fresh state.
+- `POST /buildings/{id}/transcribe`: multipart audio → editable transcript using ElevenLabs Scribe.
+- `POST /tts`: `{text}` → ElevenLabs MP3 of the existing agent's reply.
+- `GET /voice`: Agent-owned recording, transcript review, chat and spoken-reply page. See
+  [VOICE.md](VOICE.md) for configuration, session sharing, limits and verification.
 
 ```bash
 curl --fail http://127.0.0.1:8000/buildings/proc-factory-dev-003/chat \
@@ -110,8 +114,9 @@ successful Builder call; restart persistence needs a configured data location co
 - Clear a previous route when processing `closed` or `door_added`, then apply any later route action.
   The fetched UI currently keeps old route geometry after a closure; a blocked-lift answer must not
   leave the earlier lift route highlighted. No new action type is required.
-- `POST /tts` is intentionally scheduled for step 12 with **ElevenLabs text-to-speech**. The UI already
-  attempts that endpoint and falls back to browser speech. Microphone speech recognition is a separate UI feature.
+- `POST /tts` now implements **ElevenLabs text-to-speech** using the existing request contract.
+  The main UI's microphone still uses browser speech recognition. Replace it with audio capture and
+  the new transcription endpoint, or link to `/voice` with the selected building/session. See VOICE.md.
 
 ## Verification
 

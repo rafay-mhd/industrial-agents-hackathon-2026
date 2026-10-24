@@ -2,7 +2,7 @@
 
 Source of milestones: `TEAM_PLAN.md`, section 5.2.
 
-**Current status:** step 11 complete; step 12 next. Real Builder hookup and joint UI browser verification remain pending integration dependencies.
+**Current status:** step 12 in progress: ElevenLabs speech input/output implemented and service/browser checks pass; v2 generated. Clean-clone rehearsal and the user's actual microphone check remain. Real Builder hookup and main UI integration remain pending dependencies.
 **Checklist progress:** 11 / 12 steps = 91.7%.
 This is milestone completion, not measured agent accuracy or a time estimate.
 
@@ -486,11 +486,33 @@ uv run --frozen --env-file .env uvicorn agent.server:app --host 127.0.0.1 --port
   not asserted. Local transcripts are ignored under `agent_output/interactions/`; source fixtures and
   the summarized evidence are committed. Source data, Core, starter, official evaluator and v1 CSV unchanged.
 
-## Next: step 12
+## Step 12 in progress (2026-10-24)
 
-Add ElevenLabs text-to-speech (`POST /tts`), rerun dev, generate Team Simran submission v2, and repeat
-the clean-clone rehearsal. Carry forward real Builder hookup and joint browser/UI checks as teammate
-code becomes available. Finishing the checklist does not guarantee perfection on unseen questions.
+- Created a restricted ElevenLabs key at the user's explicit request and saved it only in ignored
+  `.env` with owner-only permissions. Speech-to-text, text-to-speech and Voices read are enabled;
+  ElevenAgents access is disabled. The API returned the available standard voices successfully.
+- Added speech input and output around the existing BuildingAgent, plus the Agent-owned `/voice` page.
+  The transcript is reviewed before calling the unchanged chat endpoint. Voice and typed messages
+  share the same building/session context. No ElevenLabs agent was created.
+- Voice works with catalog building data, including new registrations; vocabulary construction is
+  checked for all 280 supplied buildings. Fixed an observed large-building provider keyword-token
+  rejection with bounded hints and a one-time transcription fallback without hints.
+- Live browser speech upload → transcript → agent/Core → ElevenLabs audio and playback passed on
+  the factory. Residential and Swiss service checks returned Core-verified areas and playable MP3s.
+  See `agent/VOICE.md`. The user is trying the actual microphone separately; do not claim it passed yet.
+- **67 offline tests pass**, including 11 speech tests; Core oracle **138/138**.
+- Full live dev rerun: **138/138 answers and 138/138 extraction checks**, no execution errors.
+- Generated 145 fresh test replies, validated the CSV, and saved `submissions/team_simran_v2.csv`
+  (5,777 bytes). Test answers remain unscored because the organizers provide no test answer key.
+- Pending: clean-clone rehearsal, actual-microphone confirmation, and loading the final vocabulary
+  fix into the running voice server after the user's ongoing microphone test.
+
+## Remaining step 12 work
+
+Complete the clean-clone rehearsal and actual-microphone check. Carry forward real Builder hookup and
+main UI checks as teammate code becomes available. Finishing the checklist does not guarantee
+perfection on unseen questions. The main Interface microphone still uses browser recognition; both
+ElevenLabs directions are available now on the Agent-owned `/voice` page.
 
 ## Integration points to keep visible
 
