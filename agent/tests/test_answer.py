@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 import agent.answer as entrypoint
+from agent.diagnostics import take_trace
 
 
 BUILDING = Path(__file__).resolve().parents[2] / "data/dev/proc-factory-dev-003"
@@ -57,6 +58,17 @@ class AnswerTests(unittest.TestCase):
             with patch.object(entrypoint.BuildingAgent, "ask", side_effect=RuntimeError("test failure")):
                 with self.assertRaisesRegex(RuntimeError, "test failure"):
                     entrypoint.answer(BUILDING, "Question")
+
+    def test_explicit_model_reaches_agent_and_trace_without_changing_question(self):
+        def ask(agent, question):
+            self.assertEqual(agent.model, "claude-sonnet-5-5")
+            self.assertEqual(question, "Question")
+            return "Answer: 1"
+
+        with patch.object(entrypoint.anthropic, "Anthropic"), \
+                patch.object(entrypoint.BuildingAgent, "ask", ask):
+            entrypoint.answer(BUILDING, "Question", model="claude-sonnet-5-5")
+        self.assertEqual(take_trace()["requested_model"], "claude-sonnet-5-5")
 
     def test_invalid_building_fails_before_client_creation(self):
         with patch.object(entrypoint.anthropic, "Anthropic") as constructor:

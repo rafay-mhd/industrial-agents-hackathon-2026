@@ -35,7 +35,7 @@ def _get_client() -> anthropic.Anthropic:
         return _client
 
 
-def answer(building_directory: Path, question_text: str) -> str:
+def answer(building_directory: Path, question_text: str, *, model: str | None = None) -> str:
     """Return the Core-backed agent's full reply for one independent question.
 
     Propagate errors to the evaluator, which owns retry/failure handling.
@@ -46,7 +46,7 @@ def answer(building_directory: Path, question_text: str) -> str:
     client = _get_client()
     output_directory = OUTPUT_DIRECTORY / uuid4().hex
     output_directory.mkdir(parents=True, exist_ok=False)
-    agent = BuildingAgent(building, output_directory, client=client, mode="benchmark")
+    agent = BuildingAgent(building, output_directory, client=client, mode="benchmark", model=model)
     reply, failure = "", None
     try:
         reply = agent.ask(question_text)
@@ -61,6 +61,7 @@ def answer(building_directory: Path, question_text: str) -> str:
             "building_id": building.data["building"]["id"],
             "building_directory": str(building_directory.resolve()),
             "question": question_text, "reply": reply, "mode": agent.mode,
+            "requested_model": agent.model,
             "tool_calls": tool_calls(agent.messages), "usage": dict(agent.usage),
             "responses": agent.responses, "error": failure,
         }

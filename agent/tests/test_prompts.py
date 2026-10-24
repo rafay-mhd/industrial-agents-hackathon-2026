@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from agent.agent import BuildingAgent
 from agent.prompts import BENCHMARK_PROMPT, CHAT_PROMPT
@@ -45,6 +45,9 @@ class PromptTests(unittest.TestCase):
                 self.assertEqual(kwargs["messages"], [{"role": "user", "content": "Which is the largest office on Floor 1?"}])
                 self.assertEqual(reply, "Answer: Example room 1.02, 42.1 m²")
                 self.assertEqual(agent.usage["output_tokens"], 5)
+                self.assertEqual(kwargs["model"], agent.model)
+                self.assertEqual(kwargs["output_config"], {"effort": "medium"})
+                self.assertEqual(kwargs.get("fallbacks"), "default" if mode == "chat" else None)
 
     def test_interactive_agent_defaults_to_chat_and_rejects_unknown_mode(self):
         with TemporaryDirectory() as output:
@@ -54,6 +57,21 @@ class PromptTests(unittest.TestCase):
             self.assertNotIn("Return only the final Answer line", agent.system[0]["text"])
             with self.assertRaisesRegex(ValueError, "Unknown agent mode"):
                 BuildingAgent(building, Path(output), client=Mock(), mode="typo")
+
+    def test_model_override_is_per_agent_and_takes_priority_over_environment(self):
+        with TemporaryDirectory() as output, patch.dict("os.environ", {"AGENT_MODEL": "claude-sonnet-5-5"}):
+            building = Building.load(BUILDING)
+            client = Mock()
+            sonnet = BuildingAgent(building, Path(output), client=client, mode="benchmark")
+            opus = BuildingAgent(building, Path(output), client=client, mode="benchmark", model="claude-opus-5-5")
+            self.assertEqual(sonnet.model, "claude-sonnet-5-5")
+            self.assertEqual(opus.model, "claude-opus-5-5")
+            client.beta.messages.tool_runner.return_value = []
+            sonnet.ask("Question one")
+            opus.ask("Question two")
+            sonnet.ask("Follow-up")
+            self.assertEqual([call.kwargs["model"] for call in client.beta.messages.tool_runner.call_args_list],
+                             ["claude-sonnet-5-5", "claude-opus-5-5", "claude-sonnet-5-5"])
 
 
 if __name__ == "__main__":

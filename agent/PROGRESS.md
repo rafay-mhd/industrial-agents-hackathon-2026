@@ -2,8 +2,8 @@
 
 Source of milestones: `TEAM_PLAN.md`, section 5.2.
 
-**Current status:** step 6 complete; step 7 next.
-**Checklist progress:** 6 / 12 steps = 50%.
+**Current status:** step 7 complete; step 8 next.
+**Checklist progress:** 7 / 12 steps = 58.3%.
 This is milestone completion, not measured agent accuracy or a time estimate.
 
 - [x] 1. Repository setup and dependencies
@@ -12,7 +12,7 @@ This is milestone completion, not measured agent accuracy or a time estimate.
 - [x] 4. Tool wrappers for Core methods
 - [x] 5. Benchmark prompt and first accurate question type
 - [x] 6. Scoreboard and failure diagnostics
-- [ ] 7. Integrate remaining question types and compare models
+- [x] 7. Integrate remaining question types and compare models
 - [ ] 8. Full dev evaluation and test submission v1
 - [ ] 9. BENCHMARK.md and clean-checkout rehearsal
 - [ ] 10. HTTP server, UI actions, and Builder tool integration
@@ -248,11 +248,73 @@ uv run --env-file .env python -m agent.benchmark data/dev data/dev \
   These are provider-reported token categories, not a billing estimate.
 - Live results are in ignored local `agent_output/benchmark/step6_traced.*`.
 
-## Next: step 7
+## Step 7: all-kind live samples and model selection (2026-10-24)
 
-Run live samples across all nine question kinds and compare Sonnet with Opus on the same sample.
-Use the scoreboard to diagnose failures; keep the cheaper model if accuracy is equal. The full dev
-evaluation and first test submission remain step 8.
+- All nine kinds were already available through the unchanged Core wrappers. Exercised them through
+  live natural-language questions, without public kind hints or oracle inputs in model messages.
+- Added per-instance model selection and `--model` to the runner. Precedence is explicit argument,
+  then `AGENT_MODEL`, then the selected default. The official two-positional-argument entry point still works.
+- Implemented the starter-pattern loop in `agent/agent.py` to pass the instance's model without changing
+  global starter state or the shared API client. It preserves transcript mirroring and usage tracking.
+- Benchmark mode omits server-side automatic fallback so a comparison does not silently change models.
+  Chat retains the starter fallback behavior. Both comparison runs explicitly use medium effort.
+- Traces and JSONL attempt details now include the requested model alongside the actual response model.
+- Compared **the same 24 questions in the same order** with Opus 5.5 and Sonnet 5.5: both **24/24 answers
+  correct and 24/24 extraction checks correct**. Verified every actual response model matched the requested
+  model, with one attempt and one task tool per question. No prompt or Core changes were needed.
+- Selected **`claude-sonnet-5-5`** as the default. Published base input/output rates are $2/$10 per million
+  tokens for Sonnet versus $4/$20 for Opus, as checked on 2026-10-24 in
+  [Anthropic's model comparison](https://platform.claude.com/docs/en/models/opus-5-5/overview).
+  This choice is supported by the benchmark sample; conversational behavior remains step 11.
+
+Reproduce the matched comparison (run once per model):
+
+```bash
+uv run --env-file .env python -m agent.benchmark data/dev data/dev \
+  --per-kind 3 --no-kind-hints --model claude-opus-5-5 \
+  --out agent_output/benchmark/step7_opus_compare.csv
+uv run --env-file .env python -m agent.benchmark data/dev data/dev \
+  --per-kind 3 --no-kind-hints --model claude-sonnet-5-5 \
+  --out agent_output/benchmark/step7_sonnet_compare.csv
+```
+
+The selected default then passed a larger sample using no model override:
+
+```bash
+uv run --env-file .env python -m agent.benchmark data/dev data/dev \
+  --per-kind 5 --no-kind-hints --out agent_output/benchmark/step7_sonnet_kinds.csv
+uv run python -m agent.report agent_output/benchmark/step7_sonnet_kinds.jsonl
+```
+
+| Kind | Answers | Extraction |
+| --- | --- | --- |
+| errand | 5/5 | 5/5 |
+| floor_area_total | 5/5 | 5/5 |
+| largest_room | 5/5 | 5/5 |
+| room_stacked | 5/5 | 5/5 |
+| shared_walls_count | 5/5 | 5/5 |
+| step_free_reachable_count | 1/1 | 1/1 |
+| straight_line_3d | 5/5 | 5/5 |
+| what_if_door | 2/2 | 2/2 |
+| wide_delivery_count | 5/5 | 5/5 |
+| **Total** | **38/38** | **38/38** |
+
+- Rare kinds use every available dev example (one closure-reachability, two hypothetical doors).
+  Every kind exceeds the >=90% sample target, but this is not a full dev score.
+- Verified CSV/JSONL/trace correspondence, 38 distinct IDs, actual Sonnet responses, one attempt and
+  task-tool call per question, and exactly one Answer line in each reply. No execution/scoring errors.
+- All **36 offline tests pass**, including explicit/environment model selection, per-agent isolation,
+  benchmark fallback omission, model propagation to traces and the existing full tool-boundary suite.
+- Required Core oracle: **138/138**. Core, starter, reference benchmark and data files unchanged.
+- **86 live question runs** in this step (24 Opus + 24 Sonnet + 38 Sonnet; samples overlap).
+  Token usage is recorded in each JSONL; exact account spending is not asserted.
+- Full local results and traces remain under ignored `agent_output/`. Commands, counts and the
+  selection decision are preserved here for the team.
+
+## Next: step 8
+
+Run the selected model on all 138 dev questions, inspect failures, and generate test submission v1
+for all 145 test questions. Validate the submission's IDs, rows and Answer lines before committing it.
 
 ## Integration points to keep visible
 

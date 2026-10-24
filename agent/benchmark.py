@@ -13,6 +13,7 @@ from collections import Counter, defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 import csv
+from functools import partial
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -183,7 +184,7 @@ def answer_question(
         "tool_calls": [{**call, "attempt": trace["attempt"]} for trace in traces for call in trace["tool_calls"]],
         "usage": dict(usage),
         "attempt_details": [{key: trace.get(key) for key in
-                             ("attempt", "path", "usage", "responses", "error", "trace_write_error")} for trace in traces],
+                             ("attempt", "path", "requested_model", "usage", "responses", "error", "trace_write_error")} for trace in traces],
     }
 
 
@@ -209,7 +210,10 @@ def run(
     per_kind: int | None = None, limit: int | None = None,
     answer_fn: AnswerFunction | None = None,
     kind_hints: bool = True,
+    model: str | None = None,
 ) -> list[dict]:
+    if model is not None and answer_fn is not None:
+        raise ValueError("model cannot be combined with a custom answer_fn")
     if workers < 1 or retries < 0 or retry_delay < 0:
         raise ValueError("workers must be positive; retries and retry_delay must be nonnegative")
     if any(value is not None and value < 1 for value in (per_kind, limit)):
@@ -226,7 +230,7 @@ def run(
     questions = select_questions(load_questions(buildings, source), kinds, per_kind, limit)
     if answer_fn is None:
         from agent.answer import answer
-        answer_fn = answer
+        answer_fn = partial(answer, model=model)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     results = []
@@ -269,10 +273,12 @@ def main() -> None:
     parser.add_argument("--per-kind", type=int)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--no-kind-hints", action="store_true", help="Pass only question text, as the official evaluator does")
+    parser.add_argument("--model", help="Claude model ID (overrides AGENT_MODEL and the agent default)")
     args = parser.parse_args()
     try:
         results = run(args.buildings, args.questions, args.out, workers=args.workers, retries=args.retries,
-                      kinds=args.kinds, per_kind=args.per_kind, limit=args.limit, kind_hints=not args.no_kind_hints)
+                      kinds=args.kinds, per_kind=args.per_kind, limit=args.limit, kind_hints=not args.no_kind_hints,
+                      model=args.model)
     except (OSError, ValueError, KeyError) as exc:
         parser.error(str(exc))
     if any(row["error"] or row["scoring_error"] for row in results):
