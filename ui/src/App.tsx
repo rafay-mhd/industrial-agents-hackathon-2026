@@ -259,7 +259,13 @@ export default function App() {
           setHighlightedAssetIds(new Set(act.asset_ids));
         }
       } else if (act.type === 'closed') {
-        setClosedElementIds(new Set(act.element_ids));
+        setClosedElementIds((prev) => {
+          const next = new Set(prev);
+          for (const id of act.element_ids) {
+            next.add(id);
+          }
+          return next;
+        });
       } else if (act.type === 'door_added') {
         setAddedDoors((prev) => [...prev, act.opening]);
       }
@@ -393,8 +399,90 @@ export default function App() {
     (text: string) => {
       const lower = text.toLowerCase();
       let mockFile = '/mock/chat_route.json';
-      if (lower.includes('close') || lower.includes('shut') || lower.includes('broken')) {
-        mockFile = '/mock/chat_closed.json';
+      if (
+        lower.includes('close') ||
+        lower.includes('shut') ||
+        lower.includes('broken') ||
+        lower.includes('reopen') ||
+        lower.includes('open')
+      ) {
+        // Match specific space or door in current building
+        const targetSpace = data?.spaces?.find(
+          (s) =>
+            (s.name && lower.includes(s.name.toLowerCase())) ||
+            (s.ref && lower.includes(s.ref.toLowerCase())) ||
+            lower.includes(s.id.toLowerCase())
+        );
+        const targetDoor = data?.openings?.find(
+          (o) =>
+            (o.name && lower.includes(o.name.toLowerCase())) ||
+            lower.includes(o.id.toLowerCase())
+        );
+        const matched = targetSpace || targetDoor;
+
+        if (matched) {
+          const isReopen =
+            (lower.includes('open') || lower.includes('reopen')) &&
+            !lower.includes('close') &&
+            !lower.includes('shut');
+          const matchedName =
+            matched.name || ('ref' in matched ? (matched as any).ref : matched.id);
+
+          if (isReopen) {
+            setClosedElementIds((prev) => {
+              const next = new Set(prev);
+              next.delete(matched.id);
+              return next;
+            });
+            const res: ChatResponse = {
+              reply: `${matchedName} is now reopened and back in service.`,
+              understood: `${matchedName} reopened`,
+              needs_clarification: false,
+              actions: [],
+            };
+            const agentMsg: ChatMessage = {
+              id: `agent-${Date.now()}`,
+              sender: 'agent',
+              text: res.reply,
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              response: res,
+            };
+            setMessages((prev) => [...prev, agentMsg]);
+            if (res.understood) setRouteUnderstood(res.understood);
+            speakText(res.reply);
+            return;
+          } else {
+            setClosedElementIds((prev) => {
+              const next = new Set(prev);
+              next.add(matched.id);
+              return next;
+            });
+            const res: ChatResponse = {
+              reply: `${matchedName} is now marked as closed. Route recalculations will redirect traffic away from it.`,
+              understood: `${matchedName} closed for maintenance`,
+              needs_clarification: false,
+              actions: [
+                {
+                  type: 'closed',
+                  element_ids: [matched.id],
+                },
+              ],
+            };
+            const agentMsg: ChatMessage = {
+              id: `agent-${Date.now()}`,
+              sender: 'agent',
+              text: res.reply,
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              response: res,
+            };
+            setMessages((prev) => [...prev, agentMsg]);
+            if (res.understood) setRouteUnderstood(res.understood);
+            speakText(res.reply);
+            return;
+          }
+        } else {
+          mockFile = '/mock/chat_closed.json';
+        }
       } else if (
         lower.includes('where') ||
         lower.includes('find') ||
@@ -425,7 +513,7 @@ export default function App() {
         })
         .catch((err) => console.error('Error fetching mock response:', err));
     },
-    [applyActions, speakText]
+    [data, applyActions, speakText]
   );
 
   // Pick a mock response from dropdown or quick chips
