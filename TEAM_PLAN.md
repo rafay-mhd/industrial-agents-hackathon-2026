@@ -161,6 +161,8 @@ interruptions; it is part of their job this weekend.
 ## 4. Contracts (change only after telling the whole team)
 
 ### 4.1 Core → Agent: Python API in `core/building.py`
+**Status: done, 100% on train and dev. The authoritative method list and the exact Answer-line shapes are in `core/README.md`; the list below was the kickoff draft.**
+
 `class Building(starter_agent.building_map.BuildingMap)`. Every method returns plain dicts/lists (JSON-able).
 Every method accepts human references: a space id, an asset id, an exact name (`"Office 1.12"`), a ref
 (`"1.12"`), or a unique substring. `floor` arguments accept an int level (`1`), a floor id, or words
@@ -349,6 +351,8 @@ hundreds of known answers in `data/train` and `data/dev`, with no API calls and 
 ---
 
 ### 5.2 Agent — "question in, Answer line out; and the conversation"
+
+**Read `docs/agent_plan.md` first: it summarises what the core provides, how to wrap it as tools, and which of the steps below each core function belongs to.**
 
 **Your goal**: a Claude agent that answers the 145 test questions in the exact scored format, runs on any
 building with one command, talks well in a chat, and is reachable by the UI over HTTP. You also merge.

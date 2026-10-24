@@ -2,14 +2,14 @@
 
 Source of milestones: `TEAM_PLAN.md`, section 5.2.
 
-**Current status:** step 3 complete; step 4 next.
-**Checklist progress:** 3 / 12 steps = 25%.
+**Current status:** step 4 complete; step 5 next.
+**Checklist progress:** 4 / 12 steps = 33.3%.
 This is milestone completion, not measured agent accuracy or a time estimate.
 
 - [x] 1. Repository setup and dependencies
 - [x] 2. Answer entry point and small live baseline
 - [x] 3. Parallel benchmark runner
-- [ ] 4. Tool wrappers for Core methods
+- [x] 4. Tool wrappers for Core methods
 - [ ] 5. Benchmark prompt and first accurate question type
 - [ ] 6. Scoreboard and failure diagnostics
 - [ ] 7. Integrate remaining question types and compare models
@@ -124,12 +124,52 @@ uv run --env-file .env python -m agent.benchmark \
 - Outputs: `agent_output/benchmark/step3_factory.csv` and `step3_factory.jsonl`.
 - Live requests used Anthropic credits; exact spending is not measured by this runner yet.
 
-## Next: step 4
+## Step 4: Core integration and tool layer (2026-10-24)
 
-Implement `agent/tools.py::make_tools(building)` around the agreed Core API. Preserve existing
-search, route, closure, and door-edit capabilities; add wrappers for the delivered computation
-methods, with clear descriptions and compact outputs. Report unavailable Core methods honestly
-until the teammate delivers them. Keep geometry and routing implementations in Core's ownership.
+- Core was published during development. Fetched `origin/core` at `a8279d8` and integrated
+  `origin/main` at `ba29088`, which includes Core plus `docs/agent_plan.md`.
+- Read the authoritative Core README and integration guide. The `core/` implementation is
+  unchanged from the teammate's handoff; no geometry or routing algorithms were duplicated.
+- Resolved shared `.gitignore`, package list, and lockfile conflicts, keeping both `agent` and
+  `core` packaged and retaining our FastAPI/Uvicorn dependencies. `uv sync` succeeded.
+- Refreshed CLAUDE.md's shared-contract excerpt from the updated TEAM_PLAN.md.
+- Added `agent/tools.py`: 25 tools (the six preserved starter tools plus 19 Core wrappers).
+- Eight computation tools cover the nine benchmark kinds; two reachability kinds use one tool.
+  Other tools expose lookup vocabularies, rooms/assets, single-room facts, exits and route geometry.
+- Tool argument descriptions preserve room/floor words; room outputs preserve the unambiguous
+  `label` field. MapError becomes ToolError with the original candidate/floor/type guidance.
+- Missing/unimplemented methods report 'not available yet' rather than producing guessed values.
+- Supporting room/asset lists are capped at 20 rows with explicit truncation metadata; totals,
+  counts, labels, vocabularies, route coordinates and directions remain complete.
+- `what_if_door` simulates a change; `add_door` remains a persistent session edit. Tests verify both.
+- Added `agent/agent.py`, reusing the starter conversation loop with our tool set.
+  `answer()` now loads a fresh `core.Building` per question. The dedicated benchmark prompt
+  is intentionally still the next milestone.
+- All 18 local tests passed. They include all 138 dev questions through serialized tool calls
+  using known oracle inputs, plus errors, truncation, routes, closures and door-edit behavior.
+  This verifies tool wiring, not natural-language extraction accuracy.
+- Required `uv run python -m core.oracle_check data/dev` now passes: **138/138, all nine kinds**.
+- A tool-list script confirmed all 25 named tools and schema construction.
+
+Live smoke check:
+
+```bash
+uv run --env-file .env python -m agent.benchmark data/dev data/dev \
+  --kinds floor_area_total --per-kind 1 --workers 1 \
+  --out agent_output/benchmark/step4_tools.csv
+```
+
+- Exit code 0, one live question, one attempt, no execution errors; score **1/1**.
+- `proc-factory-dev-003-H02` now finishes with `Answer: 171.65`, matching the official scorer.
+  The same question failed in steps 2 and 3 before area tools were exposed.
+- Full reply inspected in `agent_output/benchmark/step4_tools.jsonl`.
+- This single successful live question is a smoke check, not a full dev accuracy result.
+
+## Next: step 5
+
+Add the benchmark prompt with nine question patterns, tool-selection guidance, exact Answer-line
+formats, and the `label` rule. Keep the conversation prompt separate. Evaluate floor_area_total
+and largest_room through Claude, targeting at least 90% as specified in docs/agent_plan.md.
 
 ## Integration points to keep visible
 

@@ -17,3 +17,8 @@ build/
 # Generated working outputs; final submissions remain tracked.
 agent_output/
 .DS_Store
+
+# Team tooling and frontend outputs.
+.tools/
+node_modules/
+ui/dist/
