@@ -2,12 +2,12 @@
 
 Source of milestones: `TEAM_PLAN.md`, section 5.2.
 
-**Current status:** step 2 implementation ready; live baseline pending Anthropic credentials.
-**Checklist progress:** 1 / 12 steps = 8.3%.
+**Current status:** step 2 complete; step 3 next.
+**Checklist progress:** 2 / 12 steps = 16.7%.
 This is milestone completion, not measured agent accuracy or a time estimate.
 
 - [x] 1. Repository setup and dependencies
-- [ ] 2. Answer entry point and small live baseline (code and offline checks ready; live check pending)
+- [x] 2. Answer entry point and small live baseline
 - [ ] 3. Parallel benchmark runner
 - [ ] 4. Tool wrappers for Core methods
 - [ ] 5. Benchmark prompt and first accurate question type
@@ -57,21 +57,36 @@ The starter import check also uses `MPLCONFIGDIR=/tmp/industrial-agents-matplotl
 - The official evaluator successfully loads `agent.answer:answer` without API credentials.
 - Its seeded two-question sample selects `proc-factory-dev-003-H02` and `swiss-5097-H02`.
 - Core's oracle was attempted again and remains unavailable (`No module named 'core'`).
-- No live responses, accuracy score, or Claude spending have been measured yet.
+## Step 2 live baseline (2026-10-24)
 
-## Next: finish step 2 live verification
-
-Activate the supplied Anthropic credits and configure `ANTHROPIC_API_KEY` in local `.env`.
-Do not paste the key into chat or commit it. Then run:
+The user activated Anthropic credits and configured the key in ignored local `.env`.
+Verified only that the key is configured, without printing its value. Ran:
 
 ```bash
 uv run --env-file .env python -m benchmark.evaluate data/dev \
   --kinds floor_area_total --per-kind 2 --agent agent.answer:answer
 ```
 
-Inspect both real responses in `agent_output/benchmark/results.jsonl` before marking step 2 complete.
-The starter's area-question accuracy is expected to be low until Core's area tools are integrated.
-Next milestone after that: step 3, the parallel benchmark runner.
+- Command completed successfully (exit code 0); both replies were nonempty and inspected.
+- Official score: `floor_area_total 0 / 2`, total `0 / 2 (0%)`.
+- `proc-factory-dev-003-H02`: expected 171.65 m². Claude listed seven meeting rooms but
+  returned `Answer: not available...` because its tools do not provide areas.
+- `swiss-5097-H02`: expected 14.66 m². Claude listed four storage rooms but
+  returned `Answer: unknown...` because its tools do not provide areas.
+- These are the expected starter capability failures, not authentication or adapter failures.
+  Do not use these ground-truth numbers in the agent implementation.
+- Full replies and scores: `agent_output/benchmark/results.jsonl`; preserved a separate copy
+  at `agent_output/benchmark/step2_baseline.jsonl` so later evaluator runs can overwrite results.
+- Live requests used the user's Anthropic account. Exact credit usage was not captured by this
+  custom-entry-point evaluator run; no cost estimate is asserted.
+- Core oracle attempted before recording completion; still unavailable (`No module named 'core'`).
+
+## Next: step 3
+
+Build `agent/benchmark.py`: accept a building or split and JSONL/CSV question inputs, run with
+four workers, retry transient API failures, preserve one output row per question, and write
+CSV plus results JSONL with per-kind scoring when reference answers are available.
+Keep live checks small; accurate area answers await Core tool and benchmark prompt integration.
 
 ## Integration points to keep visible
 
