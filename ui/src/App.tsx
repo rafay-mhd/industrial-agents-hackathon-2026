@@ -493,42 +493,140 @@ export default function App() {
         lower.includes('conference') ||
         lower.includes('printer') ||
         lower.includes('coffee') ||
+        lower.includes('kitchen') ||
+        lower.includes('cafeteria') ||
+        lower.includes('canteen') ||
         lower.includes('toilet') ||
         lower.includes('restroom') ||
         lower.includes('bathroom') ||
+        lower.includes('wc') ||
+        lower.includes('washroom') ||
+        lower.includes('lab') ||
+        lower.includes('locker') ||
+        lower.includes('server') ||
+        lower.includes('office') ||
         lower.includes('cnc') ||
         lower.includes('mill') ||
         lower.includes('waterjet')
       ) {
-        // Smart Nearest Asset / Meeting Navigation & Highlight
+        // Smart Nearest Asset / Room Navigation & Highlight with dynamic descriptors
+        let targetDescription = 'destination';
         let searchTerm = 'meeting';
-        if (lower.includes('printer')) searchTerm = 'printer';
-        else if (lower.includes('coffee')) searchTerm = 'coffee';
-        else if (lower.includes('cnc') || lower.includes('mill')) searchTerm = 'cnc';
-        else if (
-          lower.includes('toilet') ||
-          lower.includes('restroom') ||
-          lower.includes('bathroom')
-        )
-          searchTerm = 'toilet';
-        else if (lower.includes('waterjet')) searchTerm = 'waterjet';
-        else if (lower.includes('meeting') || lower.includes('conference')) searchTerm = 'meeting';
+        let isAssetTarget = false;
 
-        const matchedAsset = data?.assets?.find((a) => {
-          const t = (a.type || '').toLowerCase();
-          const n = (a.name || '').toLowerCase();
-          const c = (a.category || '').toLowerCase();
-          return t.includes(searchTerm) || n.includes(searchTerm) || c.includes(searchTerm);
-        });
+        if (/\b(toilet|restroom|bathroom|wc|washroom)\b/i.test(text)) {
+          targetDescription = lower.includes('restroom')
+            ? 'restroom'
+            : lower.includes('bathroom')
+            ? 'bathroom'
+            : 'toilet';
+          searchTerm = 'toilet';
+        } else if (/\b(meeting|conference|boardroom)\b/i.test(text)) {
+          targetDescription = lower.includes('place for')
+            ? 'place for a meeting'
+            : lower.includes('conference')
+            ? 'conference room'
+            : 'meeting room';
+          searchTerm = 'meeting';
+        } else if (/\b(coffee)\b/i.test(text)) {
+          targetDescription = 'coffee machine';
+          searchTerm = 'coffee';
+          isAssetTarget = true;
+        } else if (/\b(kitchen|cafeteria|canteen|break\s*room)\b/i.test(text)) {
+          targetDescription = lower.includes('cafeteria')
+            ? 'cafeteria'
+            : lower.includes('canteen')
+            ? 'canteen'
+            : 'kitchen';
+          searchTerm = 'kitchen';
+        } else if (/\b(printer|copier|scanner|print)\b/i.test(text)) {
+          targetDescription = 'printer';
+          searchTerm = 'printer';
+          isAssetTarget = true;
+        } else if (/\b(quality\s*lab|lab|laboratory)\b/i.test(text)) {
+          targetDescription = 'quality lab';
+          searchTerm = 'quality';
+        } else if (/\b(server\s*room|server)\b/i.test(text)) {
+          targetDescription = 'server room';
+          searchTerm = 'server';
+        } else if (/\b(locker\s*room|locker)\b/i.test(text)) {
+          targetDescription = 'locker room';
+          searchTerm = 'locker';
+        } else if (/\b(office)\b/i.test(text)) {
+          targetDescription = 'office';
+          searchTerm = 'office';
+        } else if (/\b(cnc|mill)\b/i.test(text)) {
+          targetDescription = 'CNC mill';
+          searchTerm = 'cnc';
+          isAssetTarget = true;
+        } else if (/\b(waterjet)\b/i.test(text)) {
+          targetDescription = 'waterjet cutter';
+          searchTerm = 'waterjet';
+          isAssetTarget = true;
+        }
+
+        const currentFloorId = selectedFloorId || data?.floors?.[0]?.id;
+
+        let matchedAsset = undefined;
+        if (isAssetTarget && data?.assets) {
+          const matchingAssets = data.assets.filter((a) => {
+            const t = (a.type || '').toLowerCase();
+            const n = (a.name || '').toLowerCase();
+            const c = (a.category || '').toLowerCase();
+            return t.includes(searchTerm) || n.includes(searchTerm) || c.includes(searchTerm);
+          });
+          matchingAssets.sort((a, b) => {
+            const aOnCurrent = a.floor_id === currentFloorId ? 0 : 1;
+            const bOnCurrent = b.floor_id === currentFloorId ? 0 : 1;
+            if (aOnCurrent !== bOnCurrent) return aOnCurrent - bOnCurrent;
+            const da = (a.position[0] - -7.25) ** 2 + (a.position[1] - 8.55) ** 2;
+            const db = (b.position[0] - -7.25) ** 2 + (b.position[1] - 8.55) ** 2;
+            return da - db;
+          });
+          matchedAsset = matchingAssets[0];
+        }
 
         const candidateRooms = data?.spaces?.filter((s) => {
           const n = (s.name || '').toLowerCase();
           const rt = (s.room_type || '').toLowerCase();
+          if (searchTerm === 'toilet') {
+            return (
+              n.includes('toilet') ||
+              n.includes('restroom') ||
+              n.includes('bathroom') ||
+              n.includes('wc') ||
+              n.includes('washroom') ||
+              rt.includes('toilet') ||
+              rt.includes('restroom')
+            );
+          }
+          if (searchTerm === 'meeting') {
+            return (
+              n.includes('meeting') ||
+              n.includes('conference') ||
+              rt.includes('meeting') ||
+              rt.includes('conference')
+            );
+          }
+          if (searchTerm === 'kitchen' || searchTerm === 'coffee') {
+            return (
+              n.includes('kitchen') ||
+              n.includes('cafeteria') ||
+              n.includes('canteen') ||
+              rt.includes('kitchen')
+            );
+          }
+          if (searchTerm === 'quality') {
+            return n.includes('quality') || n.includes('lab') || rt.includes('quality') || rt.includes('lab');
+          }
           return n.includes(searchTerm) || rt.includes(searchTerm);
         }) || [];
 
-        // Sort by distance from user's current location [-7.25, 8.55]
+        // Sort candidate rooms by current floor first, then distance from user's current location [-7.25, 8.55]
         candidateRooms.sort((a, b) => {
+          const aOnCurrent = a.floor_id === currentFloorId ? 0 : 1;
+          const bOnCurrent = b.floor_id === currentFloorId ? 0 : 1;
+          if (aOnCurrent !== bOnCurrent) return aOnCurrent - bOnCurrent;
           const ca = getPolygonMetrics(a.polygon).centroid;
           const cb = getPolygonMetrics(b.polygon).centroid;
           const da = (ca[0] - -7.25) ** 2 + (ca[1] - 8.55) ** 2;
@@ -541,7 +639,7 @@ export default function App() {
           : candidateRooms[0];
 
         if (matchedAsset || assetRoom) {
-          const roomName = assetRoom ? assetRoom.name || assetRoom.ref : 'Meeting room';
+          const roomName = assetRoom ? assetRoom.name || assetRoom.ref : targetDescription;
           const floorId = matchedAsset ? matchedAsset.floor_id : assetRoom?.floor_id;
           const assetFloor = data?.floors?.find((f) => f.id === floorId);
           const floorName = assetFloor ? assetFloor.name : 'Ground floor';
@@ -555,7 +653,11 @@ export default function App() {
             lower.includes('place for') ||
             lower.includes('how to get') ||
             lower.includes('take me') ||
-            lower.includes('way to');
+            lower.includes('way to') ||
+            lower.includes('directions') ||
+            lower.includes('where is') ||
+            lower.includes('where are') ||
+            lower.includes('find');
 
           // Determine destination coordinate: asset position or space centroid
           const destPt: [number, number] = matchedAsset
@@ -578,16 +680,21 @@ export default function App() {
             const dy = destPt[1] - startPt[1];
             const approxDist = Math.max(
               Math.round(Math.sqrt(dx * dx + dy * dy) * 1.2),
-              18
+              15
             );
 
-            const label = matchedAsset
-              ? matchedAsset.name
-              : `${roomName}`;
+            const label = matchedAsset ? matchedAsset.name : roomName;
+            const replyText = matchedAsset
+              ? `The nearest ${targetDescription} is ${label} in ${roomName} on ${floorName} (${approxDist} m away). Here is the fastest route to it.`
+              : `The closest ${targetDescription} is ${roomName} on ${floorName} (${approxDist} m away). Here is the fastest route to it.`;
+
+            const understoodText = matchedAsset
+              ? `Route to nearest ${targetDescription}: ${label} in ${roomName}`
+              : `Route to closest ${targetDescription}: ${roomName}`;
 
             const res: ChatResponse = {
-              reply: `The closest place for a meeting is ${roomName} on ${floorName} (${approxDist} m away). Here is the fastest route to it.`,
-              understood: `Route to closest meeting place: ${roomName}`,
+              reply: replyText,
+              understood: understoodText,
               needs_clarification: false,
               actions: [
                 {
@@ -628,12 +735,18 @@ export default function App() {
             if (floorId && selectedFloorId !== floorId) {
               setSelectedFloorId(floorId);
             }
-            const label = matchedAsset
-              ? matchedAsset.name
-              : roomName;
+            const label = matchedAsset ? matchedAsset.name : roomName;
+            const replyText = matchedAsset
+              ? `${label} is located in ${roomName} on ${floorName}. I have highlighted it on the map for you.`
+              : `${roomName} is located on ${floorName}. I have highlighted it on the map for you.`;
+
+            const understoodText = matchedAsset
+              ? `Locating ${label} in ${roomName}`
+              : `Locating ${roomName}`;
+
             const res: ChatResponse = {
-              reply: `${label} is located in ${roomName} on ${floorName}. I have highlighted it on the map for you.`,
-              understood: `Locating ${label} in ${roomName}`,
+              reply: replyText,
+              understood: understoodText,
               needs_clarification: false,
               actions: [
                 {
