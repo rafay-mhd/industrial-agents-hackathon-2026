@@ -34,6 +34,46 @@ function getPolygonMetrics(points: [number, number][]): { centroid: [number, num
   };
 }
 
+interface PresetBuilding {
+  id: string;
+  name: string;
+  badge: string;
+  file: string;
+}
+
+const PRESET_BUILDINGS: PresetBuilding[] = [
+  {
+    id: 'proc-factory-dev-003',
+    name: 'Fertigung Ost 27',
+    badge: 'Procedural Factory',
+    file: '/buildings/proc-factory-dev-003.json',
+  },
+  {
+    id: 'proc-campus-dev-000',
+    name: 'Hörsaalzentrum 024',
+    badge: '5-Floor Campus',
+    file: '/buildings/proc-campus-dev-000.json',
+  },
+  {
+    id: 'swiss-1689',
+    name: 'Swiss 1689',
+    badge: 'Rotated Rooms',
+    file: '/buildings/swiss-1689.json',
+  },
+  {
+    id: 'osm-way360544293',
+    name: 'Terminal 2 (Munich)',
+    badge: 'OSM 130-pt Polygon',
+    file: '/buildings/osm-way360544293.json',
+  },
+  {
+    id: 'resplan-1465',
+    name: 'Residence 1465',
+    badge: 'ResPlan Home',
+    file: '/buildings/resplan-1465.json',
+  },
+];
+
 type HoveredEntity =
   | { kind: 'space'; space: Space; area: number }
   | { kind: 'asset'; asset: Asset; dimensions?: string }
@@ -44,6 +84,9 @@ export default function App() {
   const [data, setData] = useState<BuildingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Active Building Selection
+  const [selectedBuildingId, setSelectedBuildingId] = useState<string>('proc-factory-dev-003');
 
   // Active Floor Selection
   const [selectedFloorId, setSelectedFloorId] = useState<string>('');
@@ -70,21 +113,37 @@ export default function App() {
 
   const svgRef = useRef<SVGSVGElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Fetch sample.json
-  useEffect(() => {
-    fetch('/sample.json')
+  // Load building by ID or URL
+  const loadBuilding = useCallback((buildingId: string) => {
+    setLoading(true);
+    setError(null);
+    const preset = PRESET_BUILDINGS.find((b) => b.id === buildingId);
+    const targetFile = preset ? preset.file : `/buildings/${buildingId}.json`;
+
+    fetch(targetFile)
       .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to load sample.json`);
+        if (!res.ok) {
+          // Fallback to sample.json if preset file not directly mapped
+          return fetch('/sample.json');
+        }
+        return res;
+      })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to load building`);
         return res.json();
       })
       .then((json: BuildingData) => {
         setData(json);
+        setSelectedBuildingId(buildingId);
         // Default to ground floor (level 0) or first available floor
         const ground = json.floors.find((f) => f.level === 0) || json.floors[0];
         if (ground) {
           setSelectedFloorId(ground.id);
         }
+        setZoom(1.0);
+        setPan({ x: 0, y: 0 });
         setLoading(false);
       })
       .catch((err) => {
@@ -92,6 +151,47 @@ export default function App() {
         setLoading(false);
       });
   }, []);
+
+  // Initial load
+  useEffect(() => {
+    loadBuilding('proc-factory-dev-003');
+  }, [loadBuilding]);
+
+  // Handle Custom File Upload
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setLoading(true);
+    setError(null);
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = event.target?.result as string;
+        const parsed = JSON.parse(text) as BuildingData;
+        if (!parsed.building || !parsed.spaces || !parsed.floors) {
+          throw new Error('Invalid building schema: missing building, spaces, or floors');
+        }
+        setData(parsed);
+        setSelectedBuildingId(parsed.building.id);
+        const ground = parsed.floors.find((f) => f.level === 0) || parsed.floors[0];
+        if (ground) {
+          setSelectedFloorId(ground.id);
+        }
+        setZoom(1.0);
+        setPan({ x: 0, y: 0 });
+        setLoading(false);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        setError(`Failed to parse uploaded building: ${message}`);
+        setLoading(false);
+      }
+    };
+    reader.readAsText(file);
+    // Reset file input value so re-uploading the same file triggers onChange
+    e.target.value = '';
+  };
 
   // Sorted Floors by level ascending
   const sortedFloors = useMemo(() => {
@@ -150,6 +250,29 @@ export default function App() {
   // Compute Bounding Box across all spaces on current floor
   const bounds = useMemo(() => {
     if (currentSpaces.length === 0) {
+      // Fallback: compute from all building spaces if current floor has no spaces yet
+      if (data?.spaces && data.spaces.length > 0) {
+        let minX = Infinity;
+        let maxX = -Infinity;
+        let minY = Infinity;
+        let maxY = -Infinity;
+        for (const space of data.spaces) {
+          for (const [x, y] of space.polygon) {
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+          }
+        }
+        return {
+          minX,
+          maxX,
+          minY,
+          maxY,
+          width: Math.max(maxX - minX, 1),
+          height: Math.max(maxY - minY, 1),
+        };
+      }
       return { minX: 0, maxX: 100, minY: 0, maxY: 100, width: 100, height: 100 };
     }
     let minX = Infinity;
@@ -174,7 +297,7 @@ export default function App() {
       width: Math.max(maxX - minX, 1),
       height: Math.max(maxY - minY, 1),
     };
-  }, [currentSpaces]);
+  }, [currentSpaces, data]);
 
   // Reset Pan/Zoom whenever floor changes
   useEffect(() => {
@@ -189,7 +312,7 @@ export default function App() {
   }, [bounds]);
 
   const strokeWidth = useMemo(() => {
-    return Math.max(buildingScale * 0.003, 0.18);
+    return Math.max(buildingScale * 0.0025, 0.15);
   }, [buildingScale]);
 
   const baseFontSize = useMemo(() => {
@@ -201,7 +324,7 @@ export default function App() {
   }, [buildingScale]);
 
   const entranceSize = useMemo(() => {
-    return Math.max(buildingScale * 0.015, 1.2);
+    return Math.max(buildingScale * 0.014, 1.1);
   }, [buildingScale]);
 
   // Base ViewBox with 4% padding
@@ -244,7 +367,7 @@ export default function App() {
       const mouseSvgY = currentVy + mouseRatioY * currentH;
 
       const factor = e.deltaY < 0 ? 1.2 : 1 / 1.2;
-      const nextZoom = Math.min(Math.max(zoom * factor, 0.25), 40);
+      const nextZoom = Math.min(Math.max(zoom * factor, 0.2), 50);
 
       const nextW = baseW / nextZoom;
       const nextH = baseH / nextZoom;
@@ -308,11 +431,11 @@ export default function App() {
   }, []);
 
   const handleZoomIn = useCallback(() => {
-    setZoom((z) => Math.min(z * 1.3, 40));
+    setZoom((z) => Math.min(z * 1.3, 50));
   }, []);
 
   const handleZoomOut = useCallback(() => {
-    setZoom((z) => Math.max(z / 1.3, 0.25));
+    setZoom((z) => Math.max(z / 1.3, 0.2));
   }, []);
 
   if (loading) {
@@ -328,6 +451,19 @@ export default function App() {
     return (
       <div className="state-container">
         <p style={{ color: '#ef4444' }}>Error: {error || 'No floors found'}</p>
+        <button
+          type="button"
+          onClick={() => loadBuilding('proc-factory-dev-003')}
+          style={{
+            marginTop: '12px',
+            padding: '8px 16px',
+            background: '#3b82f6',
+            color: '#fff',
+            borderRadius: '6px',
+          }}
+        >
+          Load Default Building
+        </button>
       </div>
     );
   }
@@ -344,6 +480,43 @@ export default function App() {
             </svg>
             Talk to Your Building
           </div>
+
+          {/* Building Selector Dropdown & File Picker */}
+          <div className="building-picker-group">
+            <select
+              aria-label="Select Building"
+              value={selectedBuildingId}
+              onChange={(e) => loadBuilding(e.target.value)}
+              className="building-select"
+            >
+              {PRESET_BUILDINGS.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name} ({b.badge})
+                </option>
+              ))}
+              {!PRESET_BUILDINGS.some((b) => b.id === selectedBuildingId) && (
+                <option value={selectedBuildingId}>Custom: {data.building.name}</option>
+              )}
+            </select>
+
+            {/* Custom JSON File Upload */}
+            <label className="upload-file-label" title="Upload any building.json file">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+              Upload
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".json"
+                className="upload-file-input"
+                onChange={handleFileUpload}
+              />
+            </label>
+          </div>
+
           <div className="building-title-group">
             <h1 className="building-name">{data.building.name}</h1>
             <div className="building-meta">
