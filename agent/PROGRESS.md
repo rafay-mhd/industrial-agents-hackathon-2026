@@ -2,15 +2,15 @@
 
 Source of milestones: `TEAM_PLAN.md`, section 5.2.
 
-**Current status:** step 4 complete; step 5 next.
-**Checklist progress:** 4 / 12 steps = 33.3%.
+**Current status:** step 5 complete; step 6 next.
+**Checklist progress:** 5 / 12 steps = 41.7%.
 This is milestone completion, not measured agent accuracy or a time estimate.
 
 - [x] 1. Repository setup and dependencies
 - [x] 2. Answer entry point and small live baseline
 - [x] 3. Parallel benchmark runner
 - [x] 4. Tool wrappers for Core methods
-- [ ] 5. Benchmark prompt and first accurate question type
+- [x] 5. Benchmark prompt and first accurate question type
 - [ ] 6. Scoreboard and failure diagnostics
 - [ ] 7. Integrate remaining question types and compare models
 - [ ] 8. Full dev evaluation and test submission v1
@@ -165,11 +165,51 @@ uv run --env-file .env python -m agent.benchmark data/dev data/dev \
 - Full reply inspected in `agent_output/benchmark/step4_tools.jsonl`.
 - This single successful live question is a smoke check, not a full dev accuracy result.
 
-## Next: step 5
+## Step 5: benchmark prompt and live area evaluation (2026-10-24)
 
-Add the benchmark prompt with nine question patterns, tool-selection guidance, exact Answer-line
-formats, and the `label` rule. Keep the conversation prompt separate. Evaluate floor_area_total
-and largest_room through Claude, targeting at least 90% as specified in docs/agent_plan.md.
+- Added `agent/prompts.py` with BENCHMARK_PROMPT and a separate CHAT_PROMPT (the preserved
+  starter conversational instructions; interaction tuning remains step 11).
+- BuildingAgent now accepts `mode="benchmark"` or `mode="chat"`, defaulting to chat.
+  The evaluator's `answer()` explicitly selects benchmark mode. Both modes cache the building overview.
+- The benchmark prompt maps all nine question patterns to the eight task tools, preserves exact
+  floor/room/type words, instructs use of `label` for room answers, and supplies scored Answer formats.
+- It calls for one direct task-specific tool on the successful path, limited search/retry on tool
+  errors, and `Answer: unavailable` rather than an invented value if recovery fails.
+- It distinguishes stairs-allowed errands, minimum-width deliveries, temporary closure calculations,
+  stacked-room direction, and hypothetical doors on a different floor from the rooms being counted.
+- The runner now optionally supplies the public kind as a hint (default on), records it as `kind_hint`,
+  and offers `--no-kind-hints` to exercise the question-only interface used by the official evaluator.
+  Expected answers and oracle inputs are never included in the model's user message.
+- All 21 local tests pass, including prompt selection at the SDK boundary, chat-mode separation,
+  benchmark selection in answer(), and kind hints containing only public metadata.
+- Core dev oracle remains **138/138**.
+
+Live verification:
+
+1. Four-question sample without kind hints scored **4/4**. Three replies had extra explanatory
+   text before the correct Answer line, so the final-response brevity instruction was strengthened.
+2. The revised prompt was tested on every dev question of the two milestone kinds:
+
+```bash
+uv run --env-file .env python -m agent.benchmark data/dev data/dev \
+  --kinds floor_area_total largest_room --no-kind-hints \
+  --out agent_output/benchmark/step5_dev_areas.csv
+```
+
+- `floor_area_total`: **31/31**; `largest_room`: **20/20**; combined **51/51 (100%)**.
+- All 51 replies are single plain `Answer:` lines; no API/scoring errors, one attempt each.
+- Re-scored all saved replies with the official scorer and verified exact CSV/JSONL correspondence,
+  unique IDs, and absence of kind hints. Inspected room labels on OSM and Swiss buildings.
+- Results: `agent_output/benchmark/step5_dev_areas.csv` and `.jsonl`; sample in `step5_sample.*`.
+- This meets the Agent's first end-to-end milestone and the >=90% acceptance target for these two kinds.
+  It is not a live score for all nine kinds; that expansion belongs to steps 7 and 8.
+- 55 live question runs in this step (4 sample + 51 full evaluation); exact credit spending not recorded.
+
+## Next: step 6
+
+Add `agent/report.py` and per-question tool-call logging. Report per-kind accuracy and show the
+question, tool calls/arguments, reply and expected answer for failures; distinguish reading/extraction
+mistakes from Core computation problems using the Core resolvers where applicable.
 
 ## Integration points to keep visible
 

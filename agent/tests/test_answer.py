@@ -28,6 +28,7 @@ class AnswerTests(unittest.TestCase):
         agents = []
 
         def ask(agent, question):
+            self.assertEqual(agent.mode, "benchmark")
             self.assertEqual(agent.messages, [])
             self.assertEqual(agent.map.closed, set())
             self.assertNotIn("test_edit", agent.map.data)

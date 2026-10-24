@@ -6,7 +6,7 @@ Run with credentials loaded by uv:
 
 Each question gets fresh map/conversation state and a separate artifact directory.
 Only the API client is shared. Core supplies the calculations through our tool
-wrappers. The starter conversation prompt is retained until step 5.
+wrappers. Benchmark calls use the dedicated benchmark prompt; chat stays separate.
 """
 
 from pathlib import Path
@@ -43,5 +43,5 @@ def answer(building_directory: Path, question_text: str) -> str:
     client = _get_client()
     output_directory = OUTPUT_DIRECTORY / uuid4().hex
     output_directory.mkdir(parents=True, exist_ok=False)
-    agent = BuildingAgent(building, output_directory, client=client)
+    agent = BuildingAgent(building, output_directory, client=client, mode="benchmark")
     return agent.ask(question_text)

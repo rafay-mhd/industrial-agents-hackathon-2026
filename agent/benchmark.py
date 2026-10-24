@@ -129,6 +129,7 @@ def _error_details(error: Exception) -> dict:
 
 def answer_question(
     question: Question, answer_fn: AnswerFunction, retries: int = 3, retry_delay: float = 1.0,
+    kind_hints: bool = True,
 ) -> dict:
     """Keep one result even on failure; never pass reference answers to the agent."""
     started = time.monotonic()
@@ -139,7 +140,8 @@ def answer_question(
         for attempt in range(retries + 1):
             attempts += 1
             try:
-                response = answer_fn(question.directory, question.text)
+                message = f"Question kind: {question.kind}.\n\n{question.text}" if kind_hints else question.text
+                response = answer_fn(question.directory, message)
                 if not isinstance(response, str):
                     raise TypeError("answer() must return a string")
                 reply = response
@@ -168,6 +170,7 @@ def answer_question(
         "correct": correct, "attempts": attempts,
         "elapsed_s": round(time.monotonic() - started, 3),
         "error": error, "scoring_error": scoring_error,
+        "kind_hint": question.kind if kind_hints else None,
     }
 
 
@@ -192,6 +195,7 @@ def run(
     retry_delay: float = 1.0, kinds: list[str] | None = None,
     per_kind: int | None = None, limit: int | None = None,
     answer_fn: AnswerFunction | None = None,
+    kind_hints: bool = True,
 ) -> list[dict]:
     if workers < 1 or retries < 0 or retry_delay < 0:
         raise ValueError("workers must be positive; retries and retry_delay must be nonnegative")
@@ -221,7 +225,7 @@ def run(
         csv_file.flush()
 
         def solve(question: Question) -> dict:
-            return answer_question(question, answer_fn, retries, retry_delay)
+            return answer_question(question, answer_fn, retries, retry_delay, kind_hints)
 
         # map computes concurrently but yields in input order for reproducible files.
         for result in pool.map(solve, questions):
@@ -251,10 +255,11 @@ def main() -> None:
     parser.add_argument("--kinds", nargs="+")
     parser.add_argument("--per-kind", type=int)
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--no-kind-hints", action="store_true", help="Pass only question text, as the official evaluator does")
     args = parser.parse_args()
     try:
         results = run(args.buildings, args.questions, args.out, workers=args.workers, retries=args.retries,
-                      kinds=args.kinds, per_kind=args.per_kind, limit=args.limit)
+                      kinds=args.kinds, per_kind=args.per_kind, limit=args.limit, kind_hints=not args.no_kind_hints)
     except (OSError, ValueError, KeyError) as exc:
         parser.error(str(exc))
     if any(row["error"] or row["scoring_error"] for row in results):

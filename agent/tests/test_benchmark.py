@@ -44,7 +44,7 @@ class BenchmarkTests(unittest.TestCase):
 
     def run_fake(self, fn, **kwargs):
         with redirect_stdout(io.StringIO()):
-            return run(self.split, self.source, self.output, answer_fn=fn, retry_delay=0, **kwargs)
+            return run(self.split, self.source, self.output, answer_fn=fn, retry_delay=0, kind_hints=False, **kwargs)
 
     def test_loads_single_building_split_directory_and_test_csv(self):
         for buildings in (self.split, self.building):
@@ -122,7 +122,7 @@ class BenchmarkTests(unittest.TestCase):
         error = anthropic.AuthenticationError("sensitive body", response=httpx2.Response(401, request=request), body=None)
         question = load_questions(self.split, self.source)[0]
         fn = Mock(side_effect=error)
-        result = answer_question(question, fn, retry_delay=0)
+        result = answer_question(question, fn, retry_delay=0, kind_hints=False)
         fn.assert_called_once_with(self.building, "q1")
         self.assertEqual(result["error"]["status_code"], 401)
         self.assertNotIn("sensitive body", json.dumps(result))
@@ -170,6 +170,13 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(len(first), 1)
         with self.assertRaisesRegex(ValueError, "No questions"):
             select_questions(questions, ["nonexistent"])
+
+    def test_kind_hint_adds_only_public_metadata_not_oracle_inputs(self):
+        question = load_questions(self.split, self.source)[0]
+        fn = Mock(return_value="Answer: 7")
+        result = answer_question(question, fn)
+        fn.assert_called_once_with(self.building, "Question kind: floor_area_total.\n\nq1")
+        self.assertEqual(result["kind_hint"], "floor_area_total")
 
 
 if __name__ == "__main__":
