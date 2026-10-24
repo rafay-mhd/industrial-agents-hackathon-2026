@@ -136,6 +136,8 @@ role: `core: shared walls solver`. Only Agent merges to `main`, at the checkpoin
 needs Node.js 20+. Do not run the repo from an iCloud or OneDrive folder; four people syncing `.git` through
 a cloud drive corrupts it.
 
+**Test log**: every test run goes into `docs/test_log.md` (commit, commands, numbers, misses with cause). Add an entry after each dev run and before each new submission CSV.
+
 **Checkpoints** (15 minutes, everyone shows their check, Agent merges). Fill in the times at kickoff:
 | CP | Time | What everyone shows |
 |---|---|---|
