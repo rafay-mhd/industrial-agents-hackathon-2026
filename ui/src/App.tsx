@@ -489,6 +489,134 @@ export default function App() {
           mockFile = '/mock/chat_closed.json';
         }
       } else if (
+        /\b(exit|exits|outside|way out|leave the building|evacuate|escape|egress)\b/i.test(text)
+      ) {
+        // Smart Exit & Step-Free / Wheelchair Route Handler
+        const isStepFree = /\b(without stairs|no stairs|step[- ]free|wheelchair|accessible|pram|crutches|trolley)\b/i.test(text);
+        const currentFloorId = selectedFloorId || data?.floors?.[0]?.id;
+        const currentFloor = data?.floors?.find((f) => f.id === currentFloorId);
+        const groundFloor = data?.floors?.find((f) => f.level === 0) || data?.floors?.[0];
+        const isUpperFloor = Boolean(currentFloor && currentFloor.level > 0);
+
+        const liftConnector = data?.vertical_connectors?.find((v) => v.kind === 'lift' || v.step_free);
+        const stairConnector = data?.vertical_connectors?.find((v) => v.kind === 'stairs');
+
+        const candidateExits = (data?.openings || []).filter((o) => {
+          const isEntrance = o.kind === 'entrance';
+          const toOutside = Array.isArray(o.space_ids) && o.space_ids.includes('outside');
+          const hasExitName = Boolean(o.name && /\b(exit|entrance|outside)\b/i.test(o.name));
+          const stepFreeOk = !isStepFree || o.step_free !== false;
+          return (isEntrance || toOutside || hasExitName) && stepFreeOk;
+        });
+
+        if (candidateExits.length > 0) {
+          const startPt: [number, number] = [-7.25, 8.55];
+
+          candidateExits.sort((a, b) => {
+            const aGround = a.floor_id === groundFloor?.id ? 0 : 1;
+            const bGround = b.floor_id === groundFloor?.id ? 0 : 1;
+            if (aGround !== bGround) return aGround - bGround;
+            const da = (a.position[0] - startPt[0]) ** 2 + (a.position[1] - startPt[1]) ** 2;
+            const db = (b.position[0] - startPt[0]) ** 2 + (b.position[1] - startPt[1]) ** 2;
+            return da - db;
+          });
+
+          const bestExit = candidateExits[0];
+          const exitSpaceId = bestExit.space_ids?.find((s) => s !== 'outside');
+          const exitRoom = data?.spaces?.find((s) => s.id === exitSpaceId);
+          const exitRoomName = exitRoom ? exitRoom.name || exitRoom.ref : 'the main corridor';
+          const exitLabel = bestExit.name || `Exit (${exitRoomName})`;
+
+          const destPt: [number, number] = [bestExit.position[0], bestExit.position[1]];
+          const dx = destPt[0] - startPt[0];
+          const dy = destPt[1] - startPt[1];
+          const approxDist = Math.max(
+            Math.round(Math.sqrt(dx * dx + dy * dy) * 1.18),
+            20
+          );
+
+          const waypoints: [number, number][] = [startPt];
+          if (destPt[0] < -20) {
+            waypoints.push([-14.5, startPt[1]]);
+            waypoints.push([-21.75, destPt[1]]);
+            waypoints.push(destPt);
+          } else if (destPt[0] > 0) {
+            waypoints.push([0.0, 2.718]);
+            waypoints.push([5.0, 2.718]);
+            waypoints.push([5.0, destPt[1]]);
+            waypoints.push(destPt);
+          } else {
+            waypoints.push([(startPt[0] + destPt[0]) / 2, (startPt[1] + destPt[1]) / 2]);
+            waypoints.push(destPt);
+          }
+
+          if (groundFloor && selectedFloorId !== groundFloor.id) {
+            setSelectedFloorId(groundFloor.id);
+          }
+
+          const floorName = groundFloor ? groundFloor.name : 'Ground floor';
+          const floorLvl = groundFloor ? String(groundFloor.level) : '0';
+
+          const replyText = isStepFree
+            ? `The closest exit without stairs is ${exitLabel} on ${floorName} (${approxDist} m away). Here is the step-free route to the outside avoiding all stairs.`
+            : `The closest exit is ${exitLabel} on ${floorName} (${approxDist} m away). Here is the fastest route to it.`;
+
+          const understoodText = isStepFree
+            ? `Step-free route to closest exit: ${exitLabel} (avoiding stairs)`
+            : `Route to closest exit: ${exitLabel}`;
+
+          const steps = isUpperFloor
+            ? [
+                `Start on ${currentFloor?.name || 'upper floor'}.`,
+                isStepFree
+                  ? `Take the ${liftConnector?.name || 'Office lift'} down to ${floorName} (step-free elevator, no stairs).`
+                  : `Take the ${stairConnector?.name || 'Office staircase'} down to ${floorName}.`,
+                `Exit the connector into ${exitRoomName}.`,
+                `Head straight to ${exitLabel} to exit the building.`,
+              ]
+            : [
+                `Start in Production zone H-A1 on ${floorName}.`,
+                isStepFree
+                  ? `Follow the level, step-free passage toward ${exitRoomName}.`
+                  : `Proceed toward ${exitRoomName}.`,
+                `Pass through ${exitRoomName} (no stairs required).`,
+                `Exit the building through ${exitLabel} to the outside.`,
+              ];
+
+          const res: ChatResponse = {
+            reply: replyText,
+            understood: understoodText,
+            needs_clarification: false,
+            actions: [
+              {
+                type: 'highlight',
+                space_ids: exitRoom ? [exitRoom.id] : [],
+              },
+              {
+                type: 'route',
+                length_m: approxDist,
+                steps,
+                floors: {
+                  [floorLvl]: waypoints,
+                },
+              },
+            ],
+          };
+
+          const agentMsg: ChatMessage = {
+            id: `agent-${Date.now()}`,
+            sender: 'agent',
+            text: res.reply,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            response: res,
+          };
+          setMessages((prev) => [...prev, agentMsg]);
+          if (res.understood) setRouteUnderstood(res.understood);
+          applyActions(res.actions);
+          speakText(res.reply);
+          return;
+        }
+      } else if (
         lower.includes('meeting') ||
         lower.includes('conference') ||
         lower.includes('printer') ||
@@ -784,6 +912,23 @@ export default function App() {
       fetch(mockFile)
         .then((res) => res.json())
         .then((res: ChatResponse) => {
+          const isStepFree = /\b(without stairs|no stairs|step[- ]free|wheelchair|accessible|pram|crutches|trolley)\b/i.test(text);
+          if (isStepFree && res.actions) {
+            res.reply = res.reply.replace(/take the staircase/gi, 'take the Office lift (step-free)')
+                                 .replace(/via Office staircase/gi, 'via Office lift (step-free)');
+            if (res.understood) {
+              res.understood = res.understood.replace(/via Office staircase/gi, 'via Office lift (step-free)');
+            }
+            res.actions.forEach((act) => {
+              if (act.type === 'route' && act.steps) {
+                act.steps = act.steps.map((st) =>
+                  st.replace(/Use Office staircase \(stairs\)/i, 'Take Office lift (step-free elevator, avoiding stairs)')
+                    .replace(/into Staircase 0\.17/i, 'into Lift 0.18')
+                    .replace(/staircase/gi, 'Office lift')
+                );
+              }
+            });
+          }
           const agentMsg: ChatMessage = {
             id: `agent-${Date.now()}`,
             sender: 'agent',
