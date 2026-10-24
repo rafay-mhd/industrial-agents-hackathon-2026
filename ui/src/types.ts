@@ -41,6 +41,7 @@ export interface Opening {
   space_ids: string[];
   kind: 'door' | 'opening' | 'entrance' | string;
   position: [number, number];
+  name?: string;
   width_m?: number;
   step_free?: boolean;
   synthetic?: boolean;

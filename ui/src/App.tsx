@@ -219,6 +219,11 @@ export default function App() {
   const [ttsEnabled, setTtsEnabled] = useState(true);
   const recognitionRef = useRef<any>(null);
 
+  // Polish State (Step 10: 3D Isometric View & Navigation Step Walkthrough)
+  const [isIsometric, setIsIsometric] = useState(false);
+  const [activeStepIndex, setActiveStepIndex] = useState<number | null>(null);
+  const [isPlayingNav, setIsPlayingNav] = useState(false);
+
   // Pan and Zoom State
   const [zoom, setZoom] = useState(1.0);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -573,6 +578,29 @@ export default function App() {
     }
   }, [isListening, handleSendMessage]);
 
+  // Step 10: Click a lift, stair, space, or door to toggle closed (sends "Lift 1 is closed" to chat)
+  const handleToggleElementClosure = useCallback(
+    (id: string, label: string, isCurrentlyClosed: boolean) => {
+      const nextClosed = !isCurrentlyClosed;
+      const msg = nextClosed
+        ? `${label} is closed for maintenance`
+        : `${label} is now open`;
+
+      setClosedElementIds((prev) => {
+        const copy = new Set(prev);
+        if (nextClosed) {
+          copy.add(id);
+        } else {
+          copy.delete(id);
+        }
+        return copy;
+      });
+
+      handleSendMessage(msg);
+    },
+    [handleSendMessage]
+  );
+
   // Handle Custom File Upload
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -804,6 +832,77 @@ export default function App() {
     if (!activeRoute?.floors) return [];
     return Object.keys(activeRoute.floors).sort((a, b) => Number(a) - Number(b));
   }, [activeRoute]);
+
+  // Step 10: Reset nav step player when route or building changes
+  useEffect(() => {
+    setActiveStepIndex(null);
+    setIsPlayingNav(false);
+  }, [activeRoute, selectedBuildingId]);
+
+  // Step 10: Step-by-Step Navigation Player Timer
+  useEffect(() => {
+    if (!isPlayingNav || !activeRoute || !activeRoute.steps || activeRoute.steps.length === 0) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setActiveStepIndex((prev) => {
+        const next = prev === null ? 0 : prev + 1;
+        if (next >= activeRoute.steps.length) {
+          setIsPlayingNav(false);
+          return prev;
+        }
+        return next;
+      });
+    }, 2400);
+
+    return () => clearInterval(interval);
+  }, [isPlayingNav, activeRoute]);
+
+  // Step 10: Highlight room/corridor for the current route step
+  const navHighlightedSpaceIds = useMemo(() => {
+    if (activeStepIndex === null || !activeRoute || !activeRoute.steps) {
+      return new Set<string>();
+    }
+    const currentStepText = activeRoute.steps[activeStepIndex] || '';
+    const lower = currentStepText.toLowerCase();
+
+    const ids = new Set<string>();
+    for (const space of currentSpaces) {
+      const ref = (space.ref || '').toLowerCase();
+      const name = (space.name || '').toLowerCase();
+      const id = space.id.toLowerCase();
+
+      if (
+        (ref && ref.length >= 2 && lower.includes(ref)) ||
+        (name && name.length >= 3 && lower.includes(name)) ||
+        (id && lower.includes(id))
+      ) {
+        ids.add(space.id);
+      }
+    }
+    return ids;
+  }, [activeStepIndex, activeRoute, currentSpaces]);
+
+  // Step 10: Auto-switch floor when navigation step reaches a different floor
+  useEffect(() => {
+    if (activeStepIndex === null || !activeRoute || !activeRoute.steps) return;
+    const currentStepText = activeRoute.steps[activeStepIndex] || '';
+    const lower = currentStepText.toLowerCase();
+
+    for (const floor of sortedFloors) {
+      const flName = floor.name.toLowerCase();
+      const flLvl = `floor ${floor.level}`;
+      const lvlLvl = `level ${floor.level}`;
+      if (
+        (lower.includes(flLvl) || lower.includes(lvlLvl) || lower.includes(flName)) &&
+        selectedFloorId !== floor.id
+      ) {
+        setSelectedFloorId(floor.id);
+        break;
+      }
+    }
+  }, [activeStepIndex, activeRoute, sortedFloors, selectedFloorId]);
 
   // Pan and Zoom Event Handlers
   const handleWheel = useCallback(
@@ -1046,10 +1145,17 @@ export default function App() {
       {/* Main Floor Plan Viewport */}
       <main
         ref={containerRef}
-        className={`viewport-container ${isDragging ? 'is-dragging' : ''}`}
+        className={`viewport-container ${isDragging ? 'is-dragging' : ''} ${isIsometric ? 'isometric-tilt' : ''}`}
         onMouseMove={handleMouseMove}
         onMouseDown={handleMouseDown}
       >
+        {isIsometric && currentFloor && (
+          <div className="isometric-badge">
+            <span>⬡ 3D Isometric BIM View</span>
+            <span>• Floor {currentFloor.level} ({currentFloor.name})</span>
+          </div>
+        )}
+
         {/* Layer Toggles */}
         <div className="layer-toggles-bar">
           <button
@@ -1097,6 +1203,16 @@ export default function App() {
           <button type="button" className="control-btn" onClick={handleResetView} title="Fit to View">
             ⛶
           </button>
+          <div className="control-divider" />
+          <button
+            type="button"
+            className={`control-btn ${isIsometric ? 'active' : ''}`}
+            onClick={() => setIsIsometric(!isIsometric)}
+            title={isIsometric ? 'Switch to 2D Plan View' : 'Switch to 3D Isometric View'}
+            aria-label="Toggle 3D Isometric Mode"
+          >
+            {isIsometric ? '⬒ 2D' : '⬡ 3D'}
+          </button>
         </div>
 
         {/* Route Side Panel Toggle (if route exists and panel closed) */}
@@ -1114,7 +1230,7 @@ export default function App() {
           </button>
         )}
 
-        {/* Route Side Panel (Step 5) */}
+        {/* Route Side Panel (Step 5 & 10) */}
         {activeRoute && showRoutePanel && (
           <aside className="route-panel">
             <div className="route-panel-header">
@@ -1172,15 +1288,99 @@ export default function App() {
               </div>
             )}
 
-            {/* Numbered Steps */}
-            <div className="route-steps-container">
-              {activeRoute.steps.map((step, idx) => (
-                <div key={idx} className="route-step-row">
-                  <span className="route-step-num">{idx + 1}</span>
-                  <span>{step}</span>
+            {/* Numbered Steps with Interactive Playback Controls */}
+            {activeRoute.steps && activeRoute.steps.length > 0 && (
+              <>
+                <div className="route-nav-controls">
+                  <button
+                    type="button"
+                    className="route-nav-play-btn"
+                    onClick={() => {
+                      if (isPlayingNav) {
+                        setIsPlayingNav(false);
+                      } else {
+                        if (
+                          activeStepIndex === null ||
+                          activeStepIndex >= activeRoute.steps.length - 1
+                        ) {
+                          setActiveStepIndex(0);
+                        }
+                        setIsPlayingNav(true);
+                      }
+                    }}
+                    title={isPlayingNav ? 'Pause Walkthrough' : 'Play Animated Walkthrough'}
+                  >
+                    {isPlayingNav ? '⏸ Pause' : '▶ Walkthrough'}
+                  </button>
+
+                  <div className="route-nav-arrows">
+                    <button
+                      type="button"
+                      className="route-arrow-btn"
+                      disabled={activeStepIndex === null || activeStepIndex <= 0}
+                      onClick={() =>
+                        setActiveStepIndex((prev) =>
+                          prev !== null && prev > 0 ? prev - 1 : 0
+                        )
+                      }
+                      title="Previous Step"
+                    >
+                      ◀
+                    </button>
+                    <span
+                      style={{
+                        fontSize: '11px',
+                        color: 'var(--text-muted)',
+                        padding: '0 4px',
+                        fontWeight: 600,
+                      }}
+                    >
+                      {activeStepIndex !== null
+                        ? `${activeStepIndex + 1}/${activeRoute.steps.length}`
+                        : `0/${activeRoute.steps.length}`}
+                    </span>
+                    <button
+                      type="button"
+                      className="route-arrow-btn"
+                      disabled={
+                        activeStepIndex !== null &&
+                        activeStepIndex >= activeRoute.steps.length - 1
+                      }
+                      onClick={() =>
+                        setActiveStepIndex((prev) =>
+                          prev === null
+                            ? 0
+                            : Math.min(prev + 1, activeRoute.steps.length - 1)
+                        )
+                      }
+                      title="Next Step"
+                    >
+                      ▶
+                    </button>
+                  </div>
                 </div>
-              ))}
-            </div>
+
+                <div className="route-steps-container">
+                  {activeRoute.steps.map((step, idx) => {
+                    const isCurrentStep = activeStepIndex === idx;
+                    return (
+                      <div
+                        key={idx}
+                        className={`route-step-row ${isCurrentStep ? 'active' : ''}`}
+                        onClick={() => {
+                          setActiveStepIndex(idx);
+                          setIsPlayingNav(false);
+                        }}
+                        title="Click to view and highlight this step on the floor plan"
+                      >
+                        <span className="route-step-num">{idx + 1}</span>
+                        <span>{step}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
           </aside>
         )}
 
@@ -1205,17 +1405,36 @@ export default function App() {
               const typeClass = `type-${space.type.toLowerCase()}`;
               const { area } = getPolygonMetrics(space.polygon);
 
-              // Step 6 & 7: Action effects on spaces
+              // Step 6, 7 & 10: Action effects, closures & walkthrough highlights
               const isClosed = closedElementIds.has(space.id);
               const isHighlighted = highlightedSpaceIds.has(space.id);
+              const isStepHighlighted = navHighlightedSpaceIds.has(space.id);
+
+              const isLift = space.type === 'lift';
+              const isStair = space.type === 'stair';
+              const spaceLabel =
+                space.name ||
+                (isLift
+                  ? `Lift ${space.ref || space.id}`
+                  : isStair
+                  ? `Staircase ${space.ref || space.id}`
+                  : space.ref
+                  ? `Room ${space.ref}`
+                  : `Space ${space.id}`);
 
               return (
                 <polygon
                   key={space.id}
                   id={space.id}
                   points={flippedPointsStr}
-                  className={`space-polygon ${typeClass} ${isClosed ? 'closed-space' : ''} ${isHighlighted ? 'pulse-highlight' : ''}`}
+                  className={`space-polygon ${typeClass} ${isClosed ? 'closed-space' : ''} ${
+                    isHighlighted ? 'pulse-highlight' : ''
+                  } ${isStepHighlighted ? 'step-highlight-space' : ''}`}
                   strokeWidth={strokeWidth}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleToggleElementClosure(space.id, spaceLabel, isClosed);
+                  }}
                   onMouseEnter={(e) => {
                     setHoveredEntity({ kind: 'space', space, area });
                     setTooltipPos({ x: e.clientX, y: e.clientY });
@@ -1294,15 +1513,26 @@ export default function App() {
                   .map((id) => spaceMap.get(id)?.ref || spaceMap.get(id)?.name || id)
                   .filter(Boolean);
 
+                const isDoorClosed = closedElementIds.has(door.id);
+                const doorLabel =
+                  door.name ||
+                  (connectedRefs.length > 0
+                    ? `Door between ${connectedRefs.join(' and ')}`
+                    : `Door ${door.id}`);
+
                 return (
                   <circle
                     key={door.id}
                     id={door.id}
                     cx={doorX}
                     cy={doorY}
-                    r={doorRadius}
-                    className="door-dot"
+                    r={isDoorClosed ? doorRadius * 1.3 : doorRadius}
+                    className={`door-dot ${isDoorClosed ? 'closed-door' : ''}`}
                     strokeWidth={strokeWidth * 0.5}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleToggleElementClosure(door.id, doorLabel, isDoorClosed);
+                    }}
                     onMouseEnter={(e) => {
                       e.stopPropagation();
                       setHoveredEntity({ kind: 'door', opening: door, connectedRefs });
@@ -1469,6 +1699,9 @@ export default function App() {
                   <span>•</span>
                   <span>{hoveredEntity.area.toFixed(1)} m²</span>
                 </div>
+                <div style={{ marginTop: '5px', fontSize: '10px', color: closedElementIds.has(hoveredEntity.space.id) ? '#ef4444' : '#60a5fa', fontWeight: 600 }}>
+                  🖱 Click to {closedElementIds.has(hoveredEntity.space.id) ? 'reopen' : 'toggle closed (maintenance)'}
+                </div>
               </>
             )}
 
@@ -1496,6 +1729,9 @@ export default function App() {
                   {hoveredEntity.connectedRefs.length > 0 && (
                     <span>• Connects: {hoveredEntity.connectedRefs.join(' ↔ ')}</span>
                   )}
+                </div>
+                <div style={{ marginTop: '5px', fontSize: '10px', color: closedElementIds.has(hoveredEntity.opening.id) ? '#ef4444' : '#60a5fa', fontWeight: 600 }}>
+                  🖱 Click to {closedElementIds.has(hoveredEntity.opening.id) ? 'reopen' : 'toggle closed (maintenance)'}
                 </div>
               </>
             )}
