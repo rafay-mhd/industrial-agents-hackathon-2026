@@ -633,6 +633,11 @@ export default function App() {
         lower.includes('locker') ||
         lower.includes('server') ||
         lower.includes('office') ||
+        lower.includes('work') ||
+        lower.includes('desk') ||
+        lower.includes('facility') ||
+        lower.includes('facilities') ||
+        lower.includes('place') ||
         lower.includes('cnc') ||
         lower.includes('mill') ||
         lower.includes('waterjet')
@@ -680,8 +685,14 @@ export default function App() {
         } else if (/\b(locker\s*room|locker)\b/i.test(text)) {
           targetDescription = 'locker room';
           searchTerm = 'locker';
-        } else if (/\b(office)\b/i.test(text)) {
-          targetDescription = 'office';
+        } else if (/\b(office|offices|work|workspace|workstation|desk|place to work|somewhere to work|facility|facilities)\b/i.test(text)) {
+          targetDescription = lower.includes('work')
+            ? 'place to work'
+            : lower.includes('desk')
+            ? 'desk'
+            : lower.includes('facility')
+            ? 'facility'
+            : 'office';
           searchTerm = 'office';
         } else if (/\b(cnc|mill)\b/i.test(text)) {
           targetDescription = 'CNC mill';
@@ -736,6 +747,9 @@ export default function App() {
               rt.includes('conference')
             );
           }
+          if (searchTerm === 'office') {
+            return n.includes('office') || rt.includes('office');
+          }
           if (searchTerm === 'kitchen' || searchTerm === 'coffee') {
             return (
               n.includes('kitchen') ||
@@ -750,8 +764,23 @@ export default function App() {
           return n.includes(searchTerm) || rt.includes(searchTerm);
         }) || [];
 
+        // Check if user specifically requested a destination room reference (e.g. "to Office 1.11" or "0.23")
+        const toMatch = text.match(/\bto\s+(?:the\s+)?(?:office\s+|room\s+)?([0-9]+\.[0-9]+|[hH]-[a-cA-C][1-5])/i);
+        const specificRefMatch = toMatch || text.match(/\b([0-9]+\.[0-9]+)\b/);
+        const targetRef = specificRefMatch ? specificRefMatch[1].toLowerCase() : null;
+        if (targetRef) {
+          const matchedByRef = data?.spaces?.find((s) => s.ref?.toLowerCase() === targetRef || s.name?.toLowerCase().includes(targetRef));
+          if (matchedByRef) {
+            candidateRooms.unshift(matchedByRef);
+          }
+        }
+
         // Sort candidate rooms by current floor first, then distance from user's current location [-7.25, 8.55]
         candidateRooms.sort((a, b) => {
+          if (targetRef) {
+            if (a.ref?.toLowerCase() === targetRef) return -1;
+            if (b.ref?.toLowerCase() === targetRef) return 1;
+          }
           const aOnCurrent = a.floor_id === currentFloorId ? 0 : 1;
           const bOnCurrent = b.floor_id === currentFloorId ? 0 : 1;
           if (aOnCurrent !== bOnCurrent) return aOnCurrent - bOnCurrent;
