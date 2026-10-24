@@ -1,0 +1,19 @@
+# Local credentials (commit only the placeholder template).
+.env
+.env.*
+!.env.example
+
+# Python environment, caches, and build products.
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# Generated working outputs; final submissions remain tracked.
+agent_output/
+.DS_Store
