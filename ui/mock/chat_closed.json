@@ -1,0 +1,14 @@
+{
+  "reply": "Staircase 0.17 is now marked as closed. Route recalculations will automatically redirect traffic via alternative vertical connectors.",
+  "understood": "Staircase 0.17 closed for maintenance",
+  "needs_clarification": false,
+  "actions": [
+    {
+      "type": "closed",
+      "element_ids": [
+        "proc-factory-dev-003-F0-S017",
+        "proc-factory-dev-003-V01"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "reply": "I have added a 0.9 m step-free door connecting Assembly zone H-A2 directly to Hall access 0.20.",
+  "understood": "Add door between H-A2 and 0.20",
+  "needs_clarification": false,
+  "actions": [
+    {
+      "type": "door_added",
+      "opening": {
+        "id": "new-door-dev-001",
+        "floor_id": "proc-factory-dev-003-F0",
+        "space_ids": [
+          "proc-factory-dev-003-F0-S002",
+          "proc-factory-dev-003-F0-S020"
+        ],
+        "kind": "door",
+        "position": [0.0, 20.0],
+        "width_m": 0.9,
+        "step_free": true,
+        "synthetic": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "reply": "Production zone H-A1 and CNC mill H-A1-A are highlighted on the ground floor.",
+  "understood": "Find CNC mill H-A1-A in Production zone H-A1",
+  "needs_clarification": false,
+  "actions": [
+    {
+      "type": "highlight",
+      "space_ids": ["proc-factory-dev-003-F0-S001"],
+      "asset_ids": ["proc-factory-dev-003-A00001"]
+    }
+  ]
+}
