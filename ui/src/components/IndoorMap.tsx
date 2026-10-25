@@ -57,6 +57,8 @@ export type MapProps = {
   selected: Selection;
   location: Location | null;
   avatar: number;
+  /** Show the wheelchair user instead of the walker in the 3D route preview. */
+  wheelchair?: boolean;
   onSelect: (selection: Selection) => void;
   onWarning?: () => void;
 };

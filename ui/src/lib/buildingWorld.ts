@@ -1272,6 +1272,7 @@ export function createBuildingWorld(
         camera.updateProjectionMatrix();
       }
       actor.group.visible = !!nav?.active && options.layers.route;
+      actor.tick(dt);
       transferLine.visible =
         !!nav?.active &&
         !!nav.follow &&
@@ -1440,10 +1441,14 @@ export function createBuildingWorld(
     }
   });
   return {
-    bindNavigation(store: PlaybackStore, avatar: number) {
+    bindNavigation(store: PlaybackStore, avatar: number, wheelchair = false) {
       navigation = store;
       actor.setAvatar(avatar);
+      actor.setWheelchair(wheelchair);
       navRevision = -1;
+    },
+    setWheelchair(on: boolean) {
+      actor.setWheelchair(on);
     },
     update,
     fit,

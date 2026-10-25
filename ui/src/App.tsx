@@ -1561,6 +1561,7 @@ export default function App() {
                             selected={selection}
                             location={location}
                             avatar={avatar}
+                            wheelchair={stepFree}
                             onSelect={(next) => {
                               setSelection(next);
                               const item =

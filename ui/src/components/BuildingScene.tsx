@@ -30,8 +30,17 @@ const modes = [
 ] as const;
 
 export default function BuildingScene(props: MapProps) {
-  const { data, floor, state, layers, selected, location, onSelect, avatar } =
-    props;
+  const {
+    data,
+    floor,
+    state,
+    layers,
+    selected,
+    location,
+    onSelect,
+    avatar,
+    wheelchair,
+  } = props;
   const {
     floors,
     spaces,
@@ -140,8 +149,8 @@ export default function BuildingScene(props: MapProps) {
     };
   }, [sceneData, state.doors, navigation.store]);
   useEffect(() => {
-    world.current?.bindNavigation(navigation.store, avatar);
-  }, [navigation.store, avatar, sceneData, state.doors]);
+    world.current?.bindNavigation(navigation.store, avatar, !!wheelchair);
+  }, [navigation.store, avatar, wheelchair, sceneData, state.doors]);
   useEffect(() => {
     if (selected && navigation.store.getFrame().active)
       navigation.store.setFollow(false);
