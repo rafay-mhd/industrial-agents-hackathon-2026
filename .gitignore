@@ -22,3 +22,7 @@ agent_output/
 .tools/
 node_modules/
 ui/dist/
+
+# Blender automatic backups
+*.blend1
+*.blend2
