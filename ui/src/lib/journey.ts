@@ -30,8 +30,8 @@ export function journeyEstimate(plan: RoutePlan, distance: number, pace = 1.2) {
     }
   }
   return {
-    metres: Math.max(0, Math.round(metres)),
-    seconds: Math.max(0, Math.round(seconds)),
+    metres: Math.max(0, Math.ceil(metres)),
+    seconds: Math.max(0, Math.ceil(seconds)),
     transfers,
   };
 }

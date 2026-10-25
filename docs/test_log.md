@@ -4,6 +4,17 @@ One entry per test run, newest first. Every entry names the commit it was run on
 numbers, and every miss with its cause. Add an entry whenever Core, Agent prompts or tools change, and after
 each dev run before a new submission CSV.
 
+## 2026-10-25 — aligned voice guide and glass walkthrough directions
+
+Working tree based on `428543a` (`main`). Frontend presentation and playback guidance only.
+
+Commands: `npm --prefix ui run build`, `npm --prefix ui run lint`, `npm --prefix ui test`, `git diff --check`.
+
+- **88 UI tests** pass (59 Node + 29 Vitest), with build/lint passing. Regression checks cover geometry-derived turn-distance countdown, pause/replay, turn-now/arrival, incomplete-route notices, and synchronized remaining metres in the map player, assistant card and route summary. The existing large Three.js chunk warning remains.
+- Native Edge at `127.0.0.1:8012`, synthetic `pulse-equipment-house-20261025`: Reception → Studio stays at the Core-planned **16.9 m**. Observed playback **17 → 16 → 15 → 0 walking metres**, the left-turn arrow and distance to the corner, and arrival. Both 2D and 3D show the moving character's distance badge. The larger OSM building's first-person view also visibly showed the new right-turn glass card during playback.
+- Visually checked the centered right-hand orb, contained orbital rings and visibly different blue/gold/red flow across successive screenshots. Motion settings and existing microphone/playback level inputs are retained. A real text request, “Give me directions from Reception to Studio,” returned the expected route and displayed the agent's numbered reply in separate glass steps, plus the shared live direction card. No additional microphone/provider test was needed for this UI-only change; the successful physical voice test below remains the latest speech verification.
+- No changes to Core, Claude tools/prompts, ElevenLabs transport, supplied data or submissions. This remains an animated route preview, not device positioning.
+
 ## 2026-10-25 — live voice with replacement key and realtime vocabulary fix
 
 Baseline `c4cc079`, already pushed to `origin/main` before voice testing as requested. Restarted the local backend to load the user's replacement key without printing or committing it.

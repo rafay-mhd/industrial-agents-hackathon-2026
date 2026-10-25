@@ -78,6 +78,8 @@ import {
   RoutePlayer,
   FloorTransferOverlay,
   RouteReplayButton,
+  RouteDistanceSummary,
+  AssistantDirections,
   WrittenRoute,
   RouteExploreButton,
 } from "./components/RoutePlayback";
@@ -101,6 +103,8 @@ import { RouteUpdateNotice } from "./components/RouteUpdateNotice";
 import { useBuildingFeed } from "./hooks/useBuildingFeed";
 import type { PlannedTrip, FeedEvent } from "./hooks/useBuildingFeed";
 import "./live-warnings.css";
+import "./guidance.css";
+import { AgentMessageText } from "./components/AgentMessageText";
 
 const BuildingScene = lazy(() => import("./components/BuildingScene"));
 const VoiceOrb = lazy(() => import("./components/VoiceOrb"));
@@ -594,12 +598,10 @@ export default function App() {
     setSidebar(true);
     setExpandedMap(false);
     requestAnimationFrame(() =>
-      document
-        .getElementById("community-warnings")
-        ?.scrollIntoView({
-          behavior: animateEffects ? "smooth" : "auto",
-          block: "nearest",
-        }),
+      document.getElementById("community-warnings")?.scrollIntoView({
+        behavior: animateEffects ? "smooth" : "auto",
+        block: "nearest",
+      }),
     );
   };
   const locateWarning = (id: string) => {
@@ -1928,21 +1930,7 @@ export default function App() {
                     </button>
                   </div>
                   <div className="voice-stage">
-                    {voice.transcript && (
-                      <p className="live-transcript" aria-live="polite">
-                        {voice.transcript}
-                      </p>
-                    )}
                     <div className="voice-art">
-                      <div className="voice-shader-halo">
-                        <Suspense fallback={null}>
-                          <ShaderSurface
-                            kind="halo"
-                            enabled={animateEffects && !expandedMap}
-                            active={voice.active || busy}
-                          />
-                        </Suspense>
-                      </div>
                       <div className="voice-orbits" aria-hidden="true">
                         <i />
                         <i />
@@ -1974,6 +1962,13 @@ export default function App() {
                           : "Your guide is with you"}
                     </div>
                     <h3 aria-live="polite">{phaseLabels[phase]}</h3>
+                    {voice.active && (
+                      <div className="live-transcript-slot">
+                        <p className="live-transcript" aria-live="polite">
+                          {voice.transcript}
+                        </p>
+                      </div>
+                    )}
                     <p>
                       {voice.active
                         ? "Speak naturally. Pause to send your question."
@@ -2043,7 +2038,11 @@ export default function App() {
                           )}
                           <time>{message.timestamp}</time>
                         </span>
-                        <p>{message.text}</p>
+                        {message.sender === "agent" ? (
+                          <AgentMessageText text={message.text} />
+                        ) : (
+                          <p>{message.text}</p>
+                        )}
                         {message.response?.needs_clarification && (
                           <span className="clarification-label">
                             One detail will help me get this right
@@ -2061,6 +2060,7 @@ export default function App() {
                     )}
                     <div ref={chatEnd} />
                   </div>
+                  {route && <AssistantDirections />}
                   {messages.length < 2 && (
                     <div className="suggestions">
                       <button
@@ -2183,12 +2183,9 @@ export default function App() {
                     <div className="route-heading">
                       <div>
                         <span className="eyebrow">YOUR ROUTE</span>
-                        <h3>
-                          {route.length_m.toLocaleString(undefined, {
-                            maximumFractionDigits: 1,
-                          })}
-                          <span>metres to your destination.</span>
-                        </h3>
+                        <RouteDistanceSummary
+                          fullRouteMetres={route.length_m}
+                        />
                       </div>
                       <div>
                         <RouteReplayButton />

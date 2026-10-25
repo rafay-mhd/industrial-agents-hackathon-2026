@@ -185,3 +185,26 @@ test("Animated directions show a turn-now cue, then the next leg; incomplete pat
   assert.equal(walkingCue(store.getFrame()).text, "End of mapped route");
   assert.equal(walkingCue(store.getFrame()).turn, "stop");
 });
+
+test("Turn distances count down with playback, freeze on pause and reset on replay", () => {
+  const store = createPlaybackStore();
+  store.setPlan(plan);
+  assert.equal(walkingCue(store.getFrame()).metres, 10);
+  store.seek(6 / plan.distance);
+  assert.equal(walkingCue(store.getFrame()).metres, 4);
+  assert.equal(walkingCue(store.getFrame()).turn, "left");
+  const paused = walkingCue(store.getFrame());
+  store.tick(0.1);
+  assert.deepEqual(walkingCue(store.getFrame()), paused);
+  store.seek(9.5 / plan.distance);
+  assert.equal(walkingCue(store.getFrame()).metres, 0);
+  assert.equal(walkingCue(store.getFrame()).instruction, "turn left now");
+  store.seek(11 / plan.distance);
+  assert.equal(walkingCue(store.getFrame()).metres, 9);
+  assert.equal(walkingCue(store.getFrame()).turn, "straight");
+  store.seek(1);
+  assert.equal(walkingCue(store.getFrame()).turn, "arrive");
+  assert.equal(walkingCue(store.getFrame()).metres, undefined);
+  store.restart();
+  assert.equal(walkingCue(store.getFrame()).metres, 10);
+});

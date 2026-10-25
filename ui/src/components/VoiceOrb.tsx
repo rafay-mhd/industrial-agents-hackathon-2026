@@ -73,11 +73,8 @@ export default function VoiceOrb({
       uColor1: { value: new THREE.Color("#2755bc") },
       uColor2: { value: new THREE.Color("#b33f59") },
       uGold: { value: new THREE.Color("#ecd19a") },
-      uOffsets: { value: new Float32Array([0.4, 2, 4.2, 1.1, 3.4, 5.7, 2.8]) },
       uPerlinTexture: { value: noise },
-      uTime: { value: 4 },
       uAnimation: { value: 0.7 },
-      uInverted: { value: 0 },
       uInputVolume: { value: 0 },
       uOutputVolume: { value: 0 },
       uOpacity: { value: 1 },
@@ -115,10 +112,13 @@ export default function VoiceOrb({
           const busy = ["thinking", "transcribing", "connecting"].includes(
             phaseRef.current,
           );
-          uniforms.uTime.value += delta * 0.8;
+          const speaking = phaseRef.current === "speaking";
+          const listening = ["listening", "hearing"].includes(phaseRef.current);
           uniforms.uAnimation.value +=
             delta *
-            (busy ? 0.42 : 0.12 + output.current * 0.7 + input.current * 0.3);
+            ((speaking ? 0.9 : busy ? 0.65 : listening ? 0.5 : 0.32) +
+              output.current * 1.4 +
+              input.current * 0.9);
           uniforms.uInputVolume.value +=
             (input.current - uniforms.uInputVolume.value) * 0.14;
           uniforms.uOutputVolume.value +=
@@ -150,7 +150,11 @@ export default function VoiceOrb({
     };
   }, [input, output]);
   return (
-    <div className={`orb-shell phase-${phase}`} aria-hidden="true">
+    <div
+      className={`orb-shell phase-${phase}`}
+      data-animated={animated}
+      aria-hidden="true"
+    >
       <div className="orb-halo" />
       <div
         className={`orb-render ${fallback ? "orb-fallback" : ""}`}

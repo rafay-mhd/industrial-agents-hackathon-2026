@@ -148,8 +148,26 @@ export function footprintTrail(plan: RoutePlan, spacing = 0.72) {
   return result;
 }
 
+export type WalkingCue = {
+  text: string;
+  detail: string;
+  turn: "stop" | "left" | "right" | "around" | "floor" | "arrive" | "straight";
+  metres?: number;
+  instruction?: string;
+};
+export const turnSymbol = (turn: WalkingCue["turn"]) =>
+  ({
+    left: "↰",
+    right: "↱",
+    around: "↶",
+    floor: "↕",
+    arrive: "✓",
+    stop: "!",
+    straight: "↑",
+  })[turn];
+
 /** Relative directions come from the route's geometry, never invented compass orientation. */
-export function walkingCue(frame: PlaybackFrame) {
+export function walkingCue(frame: PlaybackFrame): WalkingCue {
   if (frame.live?.offRoute)
     return {
       text: "You seem to be off the route",
@@ -211,10 +229,12 @@ export function walkingCue(frame: PlaybackFrame) {
             ? "turn right"
             : "turn left";
       return {
+        metres: remaining <= 0.75 ? 0 : Math.ceil(remaining),
+        instruction: remaining <= 0.75 ? `${name} now` : name,
         text:
           remaining <= 0.75
             ? `${name[0].toUpperCase()}${name.slice(1)} now`
-            : `In ${Math.max(1, Math.round(remaining))} m, ${name}`,
+            : `In ${Math.max(1, Math.ceil(remaining))} m, ${name}`,
         detail: frame.plan.floorNames[frame.floorId],
         turn: Math.abs(turn) > 2.5 ? "around" : turn > 0 ? "right" : "left",
       };
@@ -222,7 +242,9 @@ export function walkingCue(frame: PlaybackFrame) {
   }
   const next = frame.plan.legs[frame.legIndex + 1];
   return {
-    text: `Continue for ${Math.max(1, Math.round(leg.start + leg.distance - frame.distance))} m`,
+    metres: Math.max(0, Math.ceil(leg.start + leg.distance - frame.distance)),
+    instruction: "Continue straight",
+    text: `Continue for ${Math.max(1, Math.ceil(leg.start + leg.distance - frame.distance))} m`,
     detail:
       next?.kind === "connector"
         ? `Then ${next.name}`

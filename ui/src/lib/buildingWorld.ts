@@ -26,6 +26,8 @@ import { wallCoverage } from "./wallCoverage";
 import type { PlaybackStore } from "./routePlayback";
 import { createRouteActor } from "./routeActor";
 import { createFootsteps } from "./footsteps";
+import { walkingCue, turnSymbol } from "./walking";
+import { journeyEstimate } from "./journey";
 import { buildEnvelope, isOutdoor } from "./envelopeLayout";
 import { createExteriorScene } from "./exteriorScene";
 import { wallSegments } from "./model";
@@ -845,7 +847,9 @@ export function createBuildingWorld(
       );
     if (anchor && factor < 1) target.lerp(anchor, Math.min(0.3, 1 - factor));
     overview = false;
-    camera.position.copy(target).add(delta.normalize().multiplyScalar(distance));
+    camera.position
+      .copy(target)
+      .add(delta.normalize().multiplyScalar(distance));
   };
   const observer = new ResizeObserver(([entry]) => {
     width = entry.contentRect.width;
@@ -1006,6 +1010,11 @@ export function createBuildingWorld(
   objectTag.setAttribute("aria-hidden", "true");
   objectTag.hidden = true;
   labelHost.appendChild(objectTag);
+  const routeTag = document.createElement("div");
+  routeTag.className = "scene-route-tag";
+  routeTag.setAttribute("aria-hidden", "true");
+  routeTag.hidden = true;
+  labelHost.appendChild(routeTag);
   const labels = [...rooms.values()].sort((a, b) => b.area - a.area);
   const project = (world: THREE.Vector3) => {
     const p = world.clone().project(camera);
@@ -1017,6 +1026,27 @@ export function createBuildingWorld(
   };
   const drawLabels = () => {
     if (!options) return;
+    routeTag.hidden = true;
+    const nav = navigation?.getFrame();
+    if (nav?.active && actor.group.visible && options.layers.route) {
+      const p = project(
+        actor.group.position.clone().add(new THREE.Vector3(0, 1.8, 0)),
+      );
+      if (
+        p.z > -1 &&
+        p.z < 1 &&
+        p.x > 0 &&
+        p.x < width &&
+        p.y > 0 &&
+        p.y < height
+      ) {
+        routeTag.hidden = false;
+        routeTag.style.transform = `translate(${p.x}px, ${p.y}px) translate(-50%, -100%)`;
+        const cue = walkingCue(nav);
+        const text = `${turnSymbol(cue.turn)} ${journeyEstimate(nav.plan, nav.distance).metres} m left`;
+        if (routeTag.textContent !== text) routeTag.textContent = text;
+      }
+    }
     const occupied: { x: number; y: number; w: number }[] = [];
     exterior.drawLabels(
       project,
@@ -1197,7 +1227,11 @@ export function createBuildingWorld(
       const blend = reduced.matches ? 1 : 1 - Math.exp(-dt * 7);
       roofOpacity = THREE.MathUtils.lerp(
         roofOpacity,
-        options.mode === "building" ? 1 : LOOK.ceilings ? LOOK.ceilingOpacity : 0,
+        options.mode === "building"
+          ? 1
+          : LOOK.ceilings
+            ? LOOK.ceilingOpacity
+            : 0,
         blend,
       );
       roofEdgeMaterial.opacity = roofOpacity * 0.65;
@@ -1395,7 +1429,8 @@ export function createBuildingWorld(
             ? pendingZoom
             : pendingZoom * (1 - Math.exp(-dt * ZOOM_SMOOTHING));
         applyZoom(Math.exp(step), zoomAnchor);
-        pendingZoom = Math.abs(pendingZoom - step) < 1e-4 ? 0 : pendingZoom - step;
+        pendingZoom =
+          Math.abs(pendingZoom - step) < 1e-4 ? 0 : pendingZoom - step;
       }
       controls.autoRotate = options.orbit && !reduced.matches;
       if (!eyeView) controls.update(dt);

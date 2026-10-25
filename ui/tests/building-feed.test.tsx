@@ -6,6 +6,8 @@ import { useBuildingFeed } from "../src/hooks/useBuildingFeed";
 import {
   RoutePlaybackProvider,
   RoutePlayer,
+  AssistantDirections,
+  RouteDistanceSummary,
 } from "../src/components/RoutePlayback";
 import { useRoutePlayback } from "../src/lib/routePlaybackContext";
 import type { BuildingData, RouteAction } from "../src/types";
@@ -304,10 +306,16 @@ test("First-person selection starts the animated walkthrough; pause and replay s
       >
         <Probe />
         <RoutePlayer avatar={0} />
+        <AssistantDirections />
+        <RouteDistanceSummary fullRouteMetres={10} />
       </RoutePlaybackProvider>,
     ),
   );
-  expect(host.textContent).toContain("Continue for 10 m");
+  expect(host.textContent).toContain("Continue straight");
+  expect(
+    host.querySelector('[aria-label="Remaining walking distance"]')
+      ?.textContent,
+  ).toContain("10walking metres remaining");
   expect(host.textContent).not.toMatch(
     /Phone walking|Calibrate|Check laptop location/,
   );
@@ -317,12 +325,7 @@ test("First-person selection starts the animated walkthrough; pause and replay s
   await act(async () => controls.walkView());
   expect(
     host.querySelector('[aria-label="Current direction"]')?.textContent,
-  ).toContain("Continue for");
-  expect(
-    host
-      .querySelector('[aria-label="Current direction"] svg')
-      ?.getAttribute("aria-label"),
-  ).toBe("straight");
+  ).toContain("Continue straight");
   expect(controls.store.getFrame().firstPerson).toBe(true);
   expect(controls.store.getFrame().playing).toBe(true);
   await act(async () => controls.store.tick(0.1));
@@ -331,6 +334,25 @@ test("First-person selection starts the animated walkthrough; pause and replay s
   await act(async () => controls.toggle());
   await act(async () => controls.store.tick(0.1));
   expect(controls.store.getFrame().distance).toBe(distance);
+  await act(async () => controls.store.seek(0.4));
+  expect(
+    host.querySelector('[aria-label="Remaining walking distance"]')
+      ?.textContent,
+  ).toContain("6walking metres remaining");
+  expect(
+    host.querySelector('[aria-label="Current route directions"]')?.textContent,
+  ).toContain("6 m");
+  expect(
+    host.querySelector('[aria-label="Journey estimate"]')?.textContent,
+  ).toContain("6 m");
+  await act(async () => controls.store.seek(1));
+  expect(
+    host.querySelector('[aria-label="Current route directions"]')?.textContent,
+  ).toContain("You’ve arrived");
+  expect(
+    host.querySelector('[aria-label="Remaining walking distance"]')
+      ?.textContent,
+  ).toContain("0walking metres remaining");
   await act(async () => controls.restart());
   expect(controls.store.getFrame().distance).toBe(0);
   expect(controls.store.getFrame().firstPerson).toBe(true);

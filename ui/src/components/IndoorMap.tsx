@@ -16,7 +16,8 @@ import {
 import type { Layers, Location, MapState } from "../lib/model";
 import { useRoutePlayback } from "../lib/routePlaybackContext";
 import { travelledFloorPath } from "../lib/routePlayback";
-import { footprintTrail } from "../lib/walking";
+import { footprintTrail, walkingCue, turnSymbol } from "../lib/walking";
+import { journeyEstimate } from "../lib/journey";
 import { useRouteFrame } from "../lib/routePlaybackContext";
 import { warningPins } from "../lib/liveWarnings";
 import { PixelPerson } from "./PixelPerson";
@@ -84,6 +85,7 @@ export default function IndoorMap({
   const [zoom, setZoom] = useState(1),
     [pan, setPan] = useState({ x: 0, y: 0 }),
     [size, setSize] = useState({ width: 800, height: 550 });
+  const previewDistance = useRef<SVGTextElement>(null);
   const previewMarker = useRef<SVGGElement>(null),
     previewSprite = useRef<SVGGElement>(null),
     completedTrail = useRef<SVGPathElement>(null);
@@ -385,6 +387,12 @@ export default function IndoorMap({
         (b.height + 2 * padding) / camera.current.zoom / size.height,
       );
       previewSprite.current?.setAttribute("transform", `scale(${unit * 1.25})`);
+      if (shown && previewDistance.current) {
+        const cue = walkingCue(f);
+        const text = `${turnSymbol(cue.turn)} ${journeyEstimate(f.plan, f.distance).metres} m left`;
+        if (previewDistance.current.textContent !== text)
+          previewDistance.current.textContent = text;
+      }
       revision = f.revision;
       following = shown && f.follow;
       last = now;
@@ -796,6 +804,26 @@ export default function IndoorMap({
           aria-label="Route preview character"
         >
           <g ref={previewSprite}>
+            <g className="route-marker-badge" aria-hidden="true">
+              <rect
+                x="-43"
+                y="-58"
+                width="86"
+                height="26"
+                rx="13"
+                fill="#fffcf4"
+                fillOpacity=".96"
+                stroke="#fff"
+              />
+              <text
+                ref={previewDistance}
+                textAnchor="middle"
+                y="-41"
+                fontSize="11"
+                fontWeight="700"
+                fill="#29478e"
+              />
+            </g>
             <circle
               r={11}
               fill="#d0ae60"

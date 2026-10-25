@@ -10,8 +10,8 @@ import {
   Navigation,
   Check,
   ChevronDown,
-  ArrowLeft,
-  ArrowRight,
+  CornerUpLeft,
+  CornerUpRight,
   ArrowUp,
   TriangleAlert,
   Undo2,
@@ -26,6 +26,7 @@ import {
 } from "../lib/routePlaybackContext";
 import type { Controls } from "../lib/routePlaybackContext";
 import { walkingCue } from "../lib/walking";
+import type { WalkingCue } from "../lib/walking";
 import { journeyEstimate, durationLabel } from "../lib/journey";
 
 export function RoutePlaybackProvider({
@@ -174,20 +175,14 @@ export function RoutePlaybackProvider({
   );
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
-export function RoutePlayer(_props: { avatar: number }) {
-  const controls = useRoutePlayback(),
-    frame = useRouteFrame();
-  const cue = walkingCue(frame);
-  if (!frame.active) return null;
-  const { plan } = frame;
-  const estimate = journeyEstimate(plan, frame.distance);
+function DirectionCue({ cue }: { cue: WalkingCue }) {
   const Turn =
     cue.turn === "stop"
       ? TriangleAlert
       : cue.turn === "left"
-        ? ArrowLeft
+        ? CornerUpLeft
         : cue.turn === "right"
-          ? ArrowRight
+          ? CornerUpRight
           : cue.turn === "around"
             ? Undo2
             : cue.turn === "floor"
@@ -195,6 +190,103 @@ export function RoutePlayer(_props: { avatar: number }) {
               : cue.turn === "arrive"
                 ? Check
                 : ArrowUp;
+  return (
+    <div className="navigation-now" aria-label="Current direction">
+      <div className="navigation-avatar">
+        <Turn size={36} aria-hidden="true" />
+      </div>
+      <div className="navigation-instruction">
+        {cue.metres !== undefined && cue.metres > 0 && (
+          <span className="turn-distance">
+            {cue.metres}
+            <small>m</small>
+          </span>
+        )}
+        <strong>{cue.instruction ?? cue.text}</strong>
+        <p>{cue.detail}</p>
+      </div>
+    </div>
+  );
+}
+
+export function RouteDistanceSummary({
+  fullRouteMetres,
+}: {
+  fullRouteMetres: number;
+}) {
+  const frame = useRouteFrame();
+  const estimate = frame.active
+    ? journeyEstimate(frame.plan, frame.distance)
+    : null;
+  return (
+    <>
+      <h3
+        className="route-distance-live"
+        aria-label="Remaining walking distance"
+      >
+        {estimate?.metres ??
+          fullRouteMetres.toLocaleString(undefined, {
+            maximumFractionDigits: 1,
+          })}
+        <span>
+          {estimate ? "walking metres remaining" : "metres on your route"}
+        </span>
+      </h3>
+      <p className="route-distance-total">
+        Planned route ·{" "}
+        {fullRouteMetres.toLocaleString(undefined, {
+          maximumFractionDigits: 1,
+        })}{" "}
+        m
+      </p>
+    </>
+  );
+}
+
+export function AssistantDirections() {
+  const frame = useRouteFrame(),
+    controls = useRoutePlayback();
+  if (!frame.active) return null;
+  const estimate = journeyEstimate(frame.plan, frame.distance);
+  return (
+    <section
+      className="assistant-directions"
+      aria-label="Current route directions"
+    >
+      <span className="eyebrow">
+        {frame.finished ? "WALKTHROUGH COMPLETE" : "YOUR NEXT DIRECTION"}
+      </span>
+      <DirectionCue cue={walkingCue(frame)} />
+      <div className="assistant-journey">
+        <span>
+          <strong>{estimate.metres} m</strong> remaining
+          {estimate.transfers
+            ? ` · ${estimate.transfers} floor transfer${estimate.transfers > 1 ? "s" : ""}`
+            : ""}
+        </span>
+        <span>
+          {estimate.seconds ? `~${durationLabel(estimate.seconds)}` : "0 sec"}
+        </span>
+      </div>
+      <button className="assistant-route-play" onClick={controls.toggle}>
+        {frame.playing ? <Pause size={15} /> : <Play size={15} />}
+        {frame.playing
+          ? "Pause walkthrough"
+          : frame.finished
+            ? "Replay walkthrough"
+            : "Play walkthrough"}
+      </button>
+    </section>
+  );
+}
+
+export function RoutePlayer(_props: { avatar: number }) {
+  const controls = useRoutePlayback(),
+    frame = useRouteFrame();
+  const cue = walkingCue(frame);
+  if (!frame.active) return null;
+  const { plan } = frame;
+  const estimate = journeyEstimate(plan, frame.distance);
   return (
     <section
       className={`navigation-player ${frame.firstPerson && frame.follow ? "is-first-person" : ""}`}
@@ -211,18 +303,7 @@ export function RoutePlayer(_props: { avatar: number }) {
           <X size={14} />
         </button>
       </div>
-      <div className="navigation-now" aria-label="Current direction">
-        <div className="navigation-avatar">
-          <Turn
-            size={36}
-            aria-label={cue.turn === "around" ? "Turn around" : cue.turn}
-          />
-        </div>
-        <div>
-          <strong>{cue.text}</strong>
-          <p>{cue.detail}</p>
-        </div>
-      </div>
+      <DirectionCue cue={cue} />
       <div
         className="journey-metrics walkthrough-metrics"
         aria-label="Journey estimate"

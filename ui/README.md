@@ -158,3 +158,9 @@ Enable **Accessibility pulse** after choosing Start. Green spaces are reachable 
 **First person** starts the animated walkthrough. Its large turn arrow and metre instructions remain visible throughout playback and while paused. The preview uses the same shared route as the agent, object search and warnings.
 
 Journey time uses a regular walking pace and estimated transfer allowances (including lift waiting). It is an estimate, not live lift telemetry or a measured arrival guarantee. Actual door/closure edits feed both routing and pulse; hypothetical-door questions remain available through the agent without mutating the map.
+
+## Guide and walkthrough presentation
+
+The right-hand guide retains its large blue/red/gold voice orb, talk button and conversation. The orb has a centered, reserved stage with contained orbital rings; its flowing shader visibly moves while idle and responds more strongly to listening/speaking and the existing audio levels. Motion Off and reduced-motion preferences stop decorative animation. Numbered agent replies appear as translucent glass steps without changing their words or numbering.
+
+The glass navigation card shows a geometry-derived turn arrow, metres to the next maneuver, remaining walking distance and estimated time. A matching distance/arrow badge follows the character in both 2D and 3D. These labels and the route summary all read the same playback position, so pause, seek, replay and arrival stay synchronized. The full planned route distance is retained separately. This remains an animated walkthrough, not device location tracking; stairs and lift allowances remain separate from walking metres.
