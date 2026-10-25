@@ -1,8 +1,6 @@
 import { useEffect, useRef } from "react";
 import {
   ArrowDownToLine,
-  ArrowRight,
-  Check,
   DoorOpen,
   Layers3,
   MapPin,
@@ -14,18 +12,15 @@ import type { Dispatch, SetStateAction } from "react";
 import type { BuildingData } from "../types";
 import { floorGeometry } from "../lib/model";
 import type { Layers } from "../lib/model";
-import { PixelPerson } from "./PixelPerson";
 import { PlanImport } from "./PlanImport";
 
-export type Sheet = "layers" | "import" | "source" | "profile" | null;
+export type Sheet = "layers" | "import" | "source" | null;
 type Props = {
   panel: Sheet;
   close: () => void;
   data: BuildingData | null;
   layers: Layers;
   setLayers: Dispatch<SetStateAction<Layers>>;
-  avatar: number;
-  setAvatar: (value: number) => void;
   upload: (file: File) => Promise<void>;
   onCreated: (data: BuildingData, warnings: string[]) => Promise<void>;
   notice: string;
@@ -36,8 +31,6 @@ export default function ExplorerSheet({
   data,
   layers,
   setLayers,
-  avatar,
-  setAvatar,
   upload,
   onCreated,
   notice,
@@ -144,34 +137,6 @@ export default function ExplorerSheet({
                 height is not in the data. Room names are available in the
                 directory and on selection in both views.
               </p>
-            </>
-          )}
-          {panel === "profile" && (
-            <>
-              <span className="eyebrow">A SMALL VERSION OF YOU</span>
-              <h2>Your place in the map.</h2>
-              <p>
-                Choose your character. It marks the room you select as your
-                location, without assuming where you are.
-              </p>
-              <div className="avatar-choices">
-                {[0, 1, 2, 3].map((v) => (
-                  <button
-                    key={v}
-                    className={avatar === v ? "selected" : ""}
-                    aria-label={`Character ${v + 1}`}
-                    aria-pressed={avatar === v}
-                    onClick={() => setAvatar(v)}
-                  >
-                    <PixelPerson variant={v} />
-                    {avatar === v && <Check size={16} />}
-                  </button>
-                ))}
-              </div>
-              <button className="primary-button" onClick={close}>
-                That’s me
-                <ArrowRight size={15} />
-              </button>
             </>
           )}
           {panel === "source" && data && (
