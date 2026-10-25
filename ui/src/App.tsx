@@ -174,7 +174,7 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>(() => [welcome()]),
     [draft, setDraft] = useState(""),
     [spokenAnswers, setSpokenAnswers] = useState(false);
-  const [avatar, setAvatar] = useState(0),
+  const [avatar] = useState(0), // one character: the pixel-art walker
     [stepFree, setStepFree] = useState(false);
   const [understood, setUnderstood] = useState(""),
     [clarification, setClarification] = useState(false);
@@ -1008,13 +1008,9 @@ export default function App() {
                 {canChat ? "Agent connected" : "Map explorer"}
                 <RotateCcw size={12} />
               </button>
-              <button
-                className="avatar-button"
-                aria-label="Customize your map character"
-                onClick={() => setPanel("profile")}
-              >
+              <div className="avatar-button" aria-hidden="true">
                 <PixelPerson variant={avatar} />
-              </button>
+              </div>
             </div>
           </header>
           <div className={`workspace ${sidebar ? "" : "sidebar-collapsed"}`}>
@@ -2288,8 +2284,6 @@ export default function App() {
             data={data}
             layers={layers}
             setLayers={setLayers}
-            avatar={avatar}
-            setAvatar={setAvatar}
             upload={upload}
             onCreated={created}
             notice={notice}
