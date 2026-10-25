@@ -1,0 +1,852 @@
+{
+ "about": "Lookup from dataset to 3D models for the three.js view. All sizes in metres. GLB axes: x width, y height (up), z depth; model fronts face +Z.",
+ "placement_rule": "For each asset: model = assets[type].model ('box' = plain box of the footprint). Scale x by footprint.width_m / model.width_m and z by footprint.depth_m / model.depth_m; scale y by height_m / model.height_m when a height_m override is given, else leave y at 1. Rotate about y by footprint.rotation_deg; position at asset.position on the floor's elevation.",
+ "openings_rule": "door with width_m < 1.4 -> 'door'; door with width_m >= 1.4 -> 'door_double'; kind 'opening' with width_m <= 2.5 -> 'opening_frame', wider openings stay plain gaps; kind 'entrance' -> 'entrance'. Scale x to width_m, origin on the wall line at opening.position, front (+Z) toward the room or outside.",
+ "spaces_rule": "type 'stair' -> 'stair_dogleg' if the space's bounding box is at most 1.5 times longer than wide, else 'stair_flight'; scale x,z to the bounding box and y by floor.height_m / rise_m. type 'lift' -> 'lift' scaled to the bounding box, one per floor the lift stops at, front toward the space's door.",
+ "models": {
+  "appliance": {
+   "file": "models/appliance.glb",
+   "width_m": 0.6,
+   "height_m": 0.9,
+   "depth_m": 0.6,
+   "min": [
+    -0.3,
+    0,
+    -0.3
+   ],
+   "max": [
+    0.3,
+    0.9,
+    0.3
+   ],
+   "triangles": 200
+  },
+  "bed": {
+   "file": "models/bed.glb",
+   "width_m": 1.6,
+   "height_m": 0.9,
+   "depth_m": 2.0,
+   "min": [
+    -0.8,
+    0,
+    -1
+   ],
+   "max": [
+    0.8,
+    0.9,
+    1.0
+   ],
+   "triangles": 176
+  },
+  "bookshelf": {
+   "file": "models/bookshelf.glb",
+   "width_m": 0.9,
+   "height_m": 2,
+   "depth_m": 0.35,
+   "min": [
+    -0.45,
+    0,
+    -0.175
+   ],
+   "max": [
+    0.45,
+    2,
+    0.175
+   ],
+   "triangles": 252
+  },
+  "cabinet": {
+   "file": "models/cabinet.glb",
+   "width_m": 1.2,
+   "height_m": 2,
+   "depth_m": 0.6,
+   "min": [
+    -0.6,
+    0,
+    -0.3
+   ],
+   "max": [
+    0.6,
+    2,
+    0.3
+   ],
+   "triangles": 104
+  },
+  "chair": {
+   "file": "models/chair.glb",
+   "width_m": 0.45,
+   "height_m": 0.849,
+   "depth_m": 0.45,
+   "min": [
+    -0.225,
+    0,
+    -0.225
+   ],
+   "max": [
+    0.225,
+    0.849,
+    0.225
+   ],
+   "triangles": 160
+  },
+  "cnc_mill": {
+   "file": "models/cnc_mill.glb",
+   "width_m": 3.0,
+   "height_m": 2.2,
+   "depth_m": 2.5,
+   "min": [
+    -1.5,
+    0,
+    -1.25
+   ],
+   "max": [
+    1.5,
+    2.2,
+    1.25
+   ],
+   "triangles": 260
+  },
+  "desk": {
+   "file": "models/desk.glb",
+   "width_m": 1.6,
+   "height_m": 0.75,
+   "depth_m": 0.8,
+   "min": [
+    -0.8,
+    0,
+    -0.4
+   ],
+   "max": [
+    0.8,
+    0.75,
+    0.4
+   ],
+   "triangles": 116
+  },
+  "door": {
+   "file": "models/door.glb",
+   "width_m": 1.0,
+   "height_m": 2.15,
+   "depth_m": 0.21,
+   "min": [
+    -0.5,
+    0,
+    -0.075
+   ],
+   "max": [
+    0.5,
+    2.15,
+    0.135
+   ],
+   "triangles": 228,
+   "origin": "frame centre on the wall line; protrusions on the front (+Z in glTF)"
+  },
+  "door_double": {
+   "file": "models/door_double.glb",
+   "width_m": 1.7,
+   "height_m": 2.15,
+   "depth_m": 0.21,
+   "min": [
+    -0.85,
+    0,
+    -0.075
+   ],
+   "max": [
+    0.85,
+    2.15,
+    0.135
+   ],
+   "triangles": 220,
+   "origin": "frame centre on the wall line; protrusions on the front (+Z in glTF)"
+  },
+  "entrance": {
+   "file": "models/entrance.glb",
+   "width_m": 1.8,
+   "height_m": 2.6,
+   "depth_m": 1.2,
+   "min": [
+    -0.9,
+    0,
+    -0.1
+   ],
+   "max": [
+    0.9,
+    2.6,
+    1.1
+   ],
+   "triangles": 236,
+   "origin": "frame centre on the wall line; protrusions on the front (+Z in glTF)"
+  },
+  "filing_cabinet": {
+   "file": "models/filing_cabinet.glb",
+   "width_m": 0.5,
+   "height_m": 1.3,
+   "depth_m": 0.6,
+   "min": [
+    -0.25,
+    0,
+    -0.3
+   ],
+   "max": [
+    0.25,
+    1.3,
+    0.3
+   ],
+   "triangles": 116
+  },
+  "fire_extinguisher": {
+   "file": "models/fire_extinguisher.glb",
+   "width_m": 0.3,
+   "height_m": 0.6,
+   "depth_m": 0.3,
+   "min": [
+    -0.15,
+    0,
+    -0.15
+   ],
+   "max": [
+    0.15,
+    0.6,
+    0.15
+   ],
+   "triangles": 280
+  },
+  "forklift": {
+   "file": "models/forklift.glb",
+   "width_m": 1.2,
+   "height_m": 2.1,
+   "depth_m": 2.5,
+   "min": [
+    -0.6,
+    0,
+    -1.25
+   ],
+   "max": [
+    0.6,
+    2.1,
+    1.25
+   ],
+   "triangles": 568
+  },
+  "lift": {
+   "file": "models/lift.glb",
+   "width_m": 1.6,
+   "height_m": 2.4,
+   "depth_m": 1.63,
+   "min": [
+    -0.8,
+    0,
+    -0.815
+   ],
+   "max": [
+    0.8,
+    2.4,
+    0.815
+   ],
+   "triangles": 156
+  },
+  "locker": {
+   "file": "models/locker.glb",
+   "width_m": 0.4,
+   "height_m": 1.8,
+   "depth_m": 0.5,
+   "min": [
+    -0.2,
+    0,
+    -0.25
+   ],
+   "max": [
+    0.2,
+    1.8,
+    0.25
+   ],
+   "triangles": 104
+  },
+  "machine": {
+   "file": "models/machine.glb",
+   "width_m": 2,
+   "height_m": 1.8,
+   "depth_m": 1.5,
+   "min": [
+    -1,
+    0.0,
+    -0.75
+   ],
+   "max": [
+    1,
+    1.8,
+    0.75
+   ],
+   "triangles": 340
+  },
+  "meeting_table": {
+   "file": "models/meeting_table.glb",
+   "width_m": 2.4,
+   "height_m": 0.75,
+   "depth_m": 1.0,
+   "min": [
+    -1.2,
+    0,
+    -0.5
+   ],
+   "max": [
+    1.2,
+    0.75,
+    0.5
+   ],
+   "triangles": 180
+  },
+  "office_chair": {
+   "file": "models/office_chair.glb",
+   "width_m": 0.599,
+   "height_m": 0.9,
+   "depth_m": 0.57,
+   "min": [
+    -0.299,
+    0,
+    -0.285
+   ],
+   "max": [
+    0.299,
+    0.9,
+    0.285
+   ],
+   "triangles": 400
+  },
+  "opening_frame": {
+   "file": "models/opening_frame.glb",
+   "width_m": 1.3,
+   "height_m": 2.15,
+   "depth_m": 0.15,
+   "min": [
+    -0.65,
+    0,
+    -0.075
+   ],
+   "max": [
+    0.65,
+    2.15,
+    0.075
+   ],
+   "triangles": 48,
+   "origin": "frame centre on the wall line; protrusions on the front (+Z in glTF)"
+  },
+  "pallet_rack": {
+   "file": "models/pallet_rack.glb",
+   "width_m": 2.7,
+   "height_m": 4,
+   "depth_m": 1.1,
+   "min": [
+    -1.35,
+    0,
+    -0.55
+   ],
+   "max": [
+    1.35,
+    4,
+    0.55
+   ],
+   "triangles": 576
+  },
+  "panel": {
+   "file": "models/panel.glb",
+   "width_m": 1.8,
+   "height_m": 1.2,
+   "depth_m": 0.1,
+   "min": [
+    -0.9,
+    0.9,
+    -0.05
+   ],
+   "max": [
+    0.9,
+    2.1,
+    0.05
+   ],
+   "triangles": 96,
+   "board_bottom_m": 0.9
+  },
+  "plant": {
+   "file": "models/plant.glb",
+   "width_m": 0.5,
+   "height_m": 1.2,
+   "depth_m": 0.5,
+   "min": [
+    -0.25,
+    0,
+    -0.25
+   ],
+   "max": [
+    0.25,
+    1.2,
+    0.25
+   ],
+   "triangles": 376
+  },
+  "server_rack": {
+   "file": "models/server_rack.glb",
+   "width_m": 0.6,
+   "height_m": 2,
+   "depth_m": 1.0,
+   "min": [
+    -0.3,
+    0,
+    -0.5
+   ],
+   "max": [
+    0.3,
+    2,
+    0.5
+   ],
+   "triangles": 380
+  },
+  "sink": {
+   "file": "models/sink.glb",
+   "width_m": 0.6,
+   "height_m": 1,
+   "depth_m": 0.45,
+   "min": [
+    -0.3,
+    0,
+    -0.225
+   ],
+   "max": [
+    0.3,
+    1,
+    0.225
+   ],
+   "triangles": 300
+  },
+  "sofa": {
+   "file": "models/sofa.glb",
+   "width_m": 2,
+   "height_m": 0.85,
+   "depth_m": 0.9,
+   "min": [
+    -1,
+    0,
+    -0.45
+   ],
+   "max": [
+    1,
+    0.85,
+    0.45
+   ],
+   "triangles": 296
+  },
+  "stair_dogleg": {
+   "file": "models/stair_dogleg.glb",
+   "width_m": 2.4,
+   "height_m": 3.903,
+   "depth_m": 3.0,
+   "min": [
+    -1.2,
+    -0.0,
+    -1.5
+   ],
+   "max": [
+    1.2,
+    3.903,
+    1.5
+   ],
+   "triangles": 500,
+   "rise_m": 3.0
+  },
+  "stair_flight": {
+   "file": "models/stair_flight.glb",
+   "width_m": 1.2,
+   "height_m": 4.103,
+   "depth_m": 3.75,
+   "min": [
+    -0.6,
+    -0.0,
+    -1.875
+   ],
+   "max": [
+    0.6,
+    4.103,
+    1.875
+   ],
+   "triangles": 364,
+   "rise_m": 3.0
+  },
+  "table": {
+   "file": "models/table.glb",
+   "width_m": 1.6,
+   "height_m": 0.75,
+   "depth_m": 0.8,
+   "min": [
+    -0.8,
+    0,
+    -0.4
+   ],
+   "max": [
+    0.8,
+    0.75,
+    0.4
+   ],
+   "triangles": 252
+  },
+  "toilet": {
+   "file": "models/toilet.glb",
+   "width_m": 0.45,
+   "height_m": 0.84,
+   "depth_m": 0.66,
+   "min": [
+    -0.225,
+    0,
+    -0.33
+   ],
+   "max": [
+    0.225,
+    0.84,
+    0.33
+   ],
+   "triangles": 496
+  }
+ },
+ "assets": {
+  "3d_printer": {
+   "model": "machine",
+   "height_m": 0.7
+  },
+  "armchair": {
+   "model": "sofa"
+  },
+  "assembly_station": {
+   "model": "table",
+   "height_m": 0.9
+  },
+  "atm": {
+   "model": "appliance",
+   "height_m": 1.6
+  },
+  "bathtub": {
+   "model": "box",
+   "height_m": 0.6
+  },
+  "bed": {
+   "model": "bed"
+  },
+  "bench": {
+   "model": "table",
+   "height_m": 0.45
+  },
+  "boiler": {
+   "model": "machine"
+  },
+  "bookshelf": {
+   "model": "bookshelf"
+  },
+  "built_in_wardrobe": {
+   "model": "cabinet",
+   "height_m": 2.4
+  },
+  "canteen_table": {
+   "model": "table"
+  },
+  "chair": {
+   "model": "chair"
+  },
+  "chemical_cabinet": {
+   "model": "cabinet",
+   "height_m": 1.8
+  },
+  "cnc_lathe": {
+   "model": "cnc_mill",
+   "height_m": 2.0
+  },
+  "cnc_mill": {
+   "model": "cnc_mill"
+  },
+  "coat_rack": {
+   "model": "box",
+   "height_m": 1.8
+  },
+  "coffee_machine": {
+   "model": "appliance",
+   "height_m": 0.45
+  },
+  "coffee_table": {
+   "model": "table",
+   "height_m": 0.45
+  },
+  "compressor": {
+   "model": "machine",
+   "height_m": 1.4
+  },
+  "conveyor": {
+   "model": "box",
+   "height_m": 1.0
+  },
+  "coordinate_measuring_machine": {
+   "model": "machine",
+   "height_m": 2.4
+  },
+  "curing_oven": {
+   "model": "machine"
+  },
+  "defibrillator": {
+   "model": "box",
+   "height_m": 0.4
+  },
+  "desk": {
+   "model": "desk"
+  },
+  "dining_chair": {
+   "model": "chair"
+  },
+  "dining_table": {
+   "model": "table"
+  },
+  "dishwasher": {
+   "model": "appliance",
+   "height_m": 0.85
+  },
+  "display_screen": {
+   "model": "panel"
+  },
+  "drill_press": {
+   "model": "machine",
+   "height_m": 1.7
+  },
+  "electrical_panel": {
+   "model": "panel"
+  },
+  "eyewash_station": {
+   "model": "sink",
+   "height_m": 1.1
+  },
+  "filing_cabinet": {
+   "model": "filing_cabinet"
+  },
+  "fire_extinguisher": {
+   "model": "fire_extinguisher"
+  },
+  "forklift": {
+   "model": "forklift"
+  },
+  "forklift_charging_station": {
+   "model": "box",
+   "height_m": 1.5
+  },
+  "fridge": {
+   "model": "appliance",
+   "height_m": 1.8
+  },
+  "fume_hood": {
+   "model": "machine",
+   "height_m": 2.4
+  },
+  "hand_dryer": {
+   "model": "box",
+   "height_m": 0.3
+  },
+  "hvac_unit": {
+   "model": "machine",
+   "height_m": 1.6
+  },
+  "industrial_3d_printer": {
+   "model": "machine",
+   "height_m": 2.0
+  },
+  "injection_moulding_machine": {
+   "model": "machine",
+   "height_m": 2.2
+  },
+  "inspection_bench": {
+   "model": "table",
+   "height_m": 0.9
+  },
+  "internal_stairs": {
+   "model": "box",
+   "height_m": 3.0
+  },
+  "kitchen_counter": {
+   "model": "appliance"
+  },
+  "lab_bench": {
+   "model": "table",
+   "height_m": 0.9
+  },
+  "laser_cutter": {
+   "model": "machine",
+   "height_m": 1.3
+  },
+  "lectern": {
+   "model": "box",
+   "height_m": 1.2
+  },
+  "lecture_seating_row": {
+   "model": "sofa",
+   "height_m": 0.9
+  },
+  "locker": {
+   "model": "locker"
+  },
+  "meeting_table": {
+   "model": "meeting_table"
+  },
+  "microscope": {
+   "model": "box",
+   "height_m": 0.5
+  },
+  "microwave": {
+   "model": "appliance",
+   "height_m": 0.35
+  },
+  "milling_machine": {
+   "model": "cnc_mill"
+  },
+  "multifunction_printer": {
+   "model": "appliance",
+   "height_m": 1.2
+  },
+  "nightstand": {
+   "model": "filing_cabinet",
+   "height_m": 0.55
+  },
+  "office_chair": {
+   "model": "office_chair"
+  },
+  "oscilloscope_station": {
+   "model": "desk"
+  },
+  "outdoor_chair": {
+   "model": "chair"
+  },
+  "outdoor_table": {
+   "model": "table"
+  },
+  "packing_station": {
+   "model": "table",
+   "height_m": 0.9
+  },
+  "pallet_jack": {
+   "model": "box",
+   "height_m": 1.2
+  },
+  "pallet_rack": {
+   "model": "pallet_rack"
+  },
+  "paper_shelf": {
+   "model": "bookshelf"
+  },
+  "plant": {
+   "model": "plant"
+  },
+  "powder_station": {
+   "model": "box",
+   "height_m": 1.6
+  },
+  "press_brake": {
+   "model": "machine",
+   "height_m": 2.3
+  },
+  "printer": {
+   "model": "appliance",
+   "height_m": 0.4
+  },
+  "projector": {
+   "model": "box",
+   "height_m": 0.2
+  },
+  "projector_screen": {
+   "model": "panel"
+  },
+  "reading_table": {
+   "model": "table"
+  },
+  "reception_desk": {
+   "model": "desk",
+   "height_m": 1.1
+  },
+  "robot_cell": {
+   "model": "machine",
+   "height_m": 2.5
+  },
+  "seminar_table": {
+   "model": "table"
+  },
+  "server_rack": {
+   "model": "server_rack"
+  },
+  "serving_counter": {
+   "model": "appliance"
+  },
+  "shelf": {
+   "model": "bookshelf"
+  },
+  "shoe_cabinet": {
+   "model": "cabinet",
+   "height_m": 0.9
+  },
+  "shower": {
+   "model": "box",
+   "height_m": 2.1
+  },
+  "single_bed": {
+   "model": "bed"
+  },
+  "sink": {
+   "model": "sink"
+  },
+  "sofa": {
+   "model": "sofa"
+  },
+  "soldering_station": {
+   "model": "desk"
+  },
+  "stove": {
+   "model": "appliance"
+  },
+  "toilet": {
+   "model": "toilet"
+  },
+  "tool_cabinet": {
+   "model": "cabinet",
+   "height_m": 1.8
+  },
+  "tv_stand": {
+   "model": "cabinet",
+   "height_m": 0.5
+  },
+  "ups_unit": {
+   "model": "server_rack",
+   "height_m": 1.4
+  },
+  "vending_machine": {
+   "model": "appliance",
+   "height_m": 1.9
+  },
+  "wardrobe": {
+   "model": "cabinet"
+  },
+  "washing_machine": {
+   "model": "appliance",
+   "height_m": 0.85
+  },
+  "waste_basket": {
+   "model": "box",
+   "height_m": 0.8
+  },
+  "water_dispenser": {
+   "model": "appliance",
+   "height_m": 1.1
+  },
+  "waterjet_cutter": {
+   "model": "machine",
+   "height_m": 2.0
+  },
+  "welding_station": {
+   "model": "machine"
+  },
+  "whiteboard": {
+   "model": "panel"
+  },
+  "workbench": {
+   "model": "table",
+   "height_m": 0.9
+  }
+ }
+}
