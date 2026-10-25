@@ -5,11 +5,11 @@
  * `look-experiment` branch sets them to true; flip them here to switch back. */
 export const LOOK = {
   /** Walls at their source floor height in Cutaway, Exploded and Inside instead of the 0.7 m cutaway. */
-  fullHeightWalls: false,
+  fullHeightWalls: true,
   /** A translucent ceiling slab per room in the interior modes. */
-  ceilings: false,
+  ceilings: true,
   /** The exterior shell drawn translucent around the interior so upper floors do not float. */
-  ghostEnvelope: false,
+  ghostEnvelope: true,
   ceilingOpacity: 0.18,
   envelopeOpacity: 0.12,
 };
