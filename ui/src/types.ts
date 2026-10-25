@@ -48,6 +48,7 @@ export interface Opening {
 }
 
 export interface VerticalConnector {
+  synthetic?: boolean;
   id: string;
   kind: 'stairs' | 'lift' | string;
   name: string;
@@ -72,6 +73,7 @@ export interface Asset {
   position: [number, number];
   footprint?: AssetFootprint | [number, number, number];
   source?: string;
+  height_m?: number;
 }
 
 export function parseFootprint(fp: unknown): AssetFootprint | null {

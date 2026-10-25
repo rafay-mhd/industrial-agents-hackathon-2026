@@ -1,2765 +1,1777 @@
-import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  AnimatePresence,
+  MotionConfig,
+  motion,
+  useReducedMotion,
+} from "motion/react";
+import {
+  ArrowRight,
+  ArrowUpRight,
+  Building2,
+  Box,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Compass,
+  Layers3,
+  LoaderCircle,
+  Map,
+  MapPin,
+  Mic,
+  MicOff,
+  Navigation,
+  Search,
+  Settings2,
+  ShieldCheck,
+  Sparkles,
+  Upload,
+  Volume2,
+  VolumeX,
+  X,
+  Accessibility,
+  Info,
+  RotateCcw,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Maximize2,
+  Minimize2,
+} from "lucide-react";
 import type {
   BuildingData,
-  Space,
-  Opening,
-  Asset,
-  RouteAction,
-  ChatResponse,
   ChatMessage,
-  ChatAction,
-} from './types';
-import { parseFootprint } from './types';
-import './App.css';
+  ChatResponse,
+  Space,
+  Asset,
+} from "./types";
+import { connectorLayouts } from "./lib/connectorLayout";
+import { describeAsset } from "./lib/assetCatalog";
+import { chat, presets, request } from "./lib/api";
+import type { BuildingSummary, VoiceStatus } from "./lib/api";
+import {
+  applyMapActions,
+  category,
+  emptyMapState,
+  interiorPoint,
+  label,
+  palette,
+  parseBuilding,
+  polygonArea,
+  routeOnFloor,
+  visibleClosures,
+} from "./lib/model";
+import type { Layers, Location, MapState } from "./lib/model";
+import {
+  RoutePlaybackProvider,
+  RoutePlayer,
+  RouteReplayButton,
+  WrittenRoute,
+  RouteExploreButton,
+} from "./components/RoutePlayback";
+import IndoorMap from "./components/IndoorMap";
+import type { Selection } from "./components/IndoorMap";
+import { PixelPerson } from "./components/PixelPerson";
+import ExplorerSheet from "./components/ExplorerSheet";
+import type { Sheet } from "./components/ExplorerSheet";
+import { useVoice } from "./hooks/useVoice";
+import "./App.css";
+import "./experience.css";
 
-const SERVER_URL = 'http://localhost:8000';
-
-function getSessionId(): string {
-  let sid = sessionStorage.getItem('building_agent_session_id');
-  if (!sid) {
-    sid = 'sess_' + Math.random().toString(36).substring(2, 11);
-    sessionStorage.setItem('building_agent_session_id', sid);
-  }
-  return sid;
-}
-
-interface ServerBuildingSummary {
-  id: string;
-  name: string;
-  source: string;
-  floors?: { level: number; name: string }[];
-}
-
-// Polygon Centroid and Area calculation using Shoelace formula
-function getPolygonMetrics(points: [number, number][]): { centroid: [number, number]; area: number } {
-  let areaSum = 0;
-  let cx = 0;
-  let cy = 0;
-  const n = points.length;
-
-  for (let i = 0; i < n; i++) {
-    const [x0, y0] = points[i];
-    const [x1, y1] = points[(i + 1) % n];
-    const cross = x0 * y1 - x1 * y0;
-    areaSum += cross;
-    cx += (x0 + x1) * cross;
-    cy += (y0 + y1) * cross;
-  }
-
-  const signedArea = areaSum / 2;
-  const area = Math.abs(signedArea);
-
-  if (Math.abs(signedArea) < 1e-6) {
-    const avgX = points.reduce((acc, p) => acc + p[0], 0) / n;
-    const avgY = points.reduce((acc, p) => acc + p[1], 0) / n;
-    return { centroid: [avgX, avgY], area: 0 };
-  }
-
-  return {
-    centroid: [cx / (6 * signedArea), cy / (6 * signedArea)],
-    area,
-  };
-}
-
-// 5-Pointed Star Points Generator for Route End Marker
-function getStarPoints(cx: number, cy: number, spikes = 5, outerR = 1.2, innerR = 0.55): string {
-  let rot = (Math.PI / 2) * 3;
-  const step = Math.PI / spikes;
-  const pts: string[] = [];
-  for (let i = 0; i < spikes; i++) {
-    let x = cx + Math.cos(rot) * outerR;
-    let y = cy + Math.sin(rot) * outerR;
-    pts.push(`${x},${y}`);
-    rot += step;
-    x = cx + Math.cos(rot) * innerR;
-    y = cy + Math.sin(rot) * innerR;
-    pts.push(`${x},${y}`);
-    rot += step;
-  }
-  return pts.join(' ');
-}
-
-interface PresetBuilding {
-  id: string;
-  name: string;
-  badge: string;
-  file: string;
-}
-
-const PRESET_BUILDINGS: PresetBuilding[] = [
-  {
-    id: 'proc-factory-dev-003',
-    name: 'Fertigung Ost 27',
-    badge: 'Procedural Factory',
-    file: '/buildings/proc-factory-dev-003.json',
-  },
-  {
-    id: 'proc-campus-dev-000',
-    name: 'Hörsaalzentrum 024',
-    badge: '5-Floor Campus',
-    file: '/buildings/proc-campus-dev-000.json',
-  },
-  {
-    id: 'swiss-1689',
-    name: 'Swiss 1689',
-    badge: 'Rotated Rooms',
-    file: '/buildings/swiss-1689.json',
-  },
-  {
-    id: 'osm-way360544293',
-    name: 'Terminal 2 (Munich)',
-    badge: 'OSM 130-pt Polygon',
-    file: '/buildings/osm-way360544293.json',
-  },
-  {
-    id: 'resplan-1465',
-    name: 'Residence 1465',
-    badge: 'ResPlan Home',
-    file: '/buildings/resplan-1465.json',
-  },
-];
-
-interface MockOption {
-  id: string;
-  label: string;
-  file: string;
-  prompt: string;
-}
-
-const MOCK_OPTIONS: MockOption[] = [
-  {
-    id: 'chat_route',
-    label: 'Route: H-A1 → Office 1.11',
-    file: '/mock/chat_route.json',
-    prompt: 'Route from Production zone H-A1 to Office 1.11',
-  },
-  {
-    id: 'chat_clarify',
-    label: 'Clarification Needed',
-    file: '/mock/chat_clarify.json',
-    prompt: 'Where is the office?',
-  },
-  {
-    id: 'chat_closed',
-    label: 'Close Staircase 0.17',
-    file: '/mock/chat_closed.json',
-    prompt: 'Staircase 0.17 is closed for maintenance',
-  },
-  {
-    id: 'chat_highlight',
-    label: 'Highlight CNC Mill',
-    file: '/mock/chat_highlight.json',
-    prompt: 'Where is the cnc mill?',
-  },
-  {
-    id: 'chat_door_added',
-    label: 'Add Door H-A2 ↔ 0.20',
-    file: '/mock/chat_door_added.json',
-    prompt: 'Add a door between Assembly zone H-A2 and Hall access 0.20',
-  },
-];
-
-interface UserLocation {
-  spaceId: string;
-  spaceName: string;
-  floorId: string;
-  position: [number, number];
-}
-
-type HoveredEntity =
-  | { kind: 'space'; space: Space; area: number }
-  | { kind: 'asset'; asset: Asset; dimensions?: string }
-  | { kind: 'door'; opening: Opening; connectedRefs: string[] }
-  | { kind: 'entrance'; opening: Opening };
+const BuildingScene = lazy(() => import("./components/BuildingScene"));
+const VoiceOrb = lazy(() => import("./components/VoiceOrb"));
+const ShaderSurface = lazy(() => import("./components/ShaderSurface"));
+const defaultId = "proc-factory-dev-003";
+const time = () =>
+  new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const welcome = (): ChatMessage => ({
+  id: crypto.randomUUID(),
+  sender: "agent",
+  text: "A little guidance goes a long way. Tell me where you are and where you’d like to go.",
+  timestamp: time(),
+});
 
 export default function App() {
-  const [data, setData] = useState<BuildingData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  // Live Server Status (Step 7)
-  const [serverOnline, setServerOnline] = useState<boolean>(false);
-  const [serverBuildings, setServerBuildings] = useState<ServerBuildingSummary[]>([]);
-
-  // Active Building Selection
-  const [selectedBuildingId, setSelectedBuildingId] = useState<string>('proc-factory-dev-003');
-
-  // Active Floor Selection
-  const [selectedFloorId, setSelectedFloorId] = useState<string>('');
-
-  // Hover state
-  const [hoveredEntity, setHoveredEntity] = useState<HoveredEntity | null>(null);
-  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
-
-  // Layer Toggles
-  const [showLabels, setShowLabels] = useState(true);
-  const [showDoors, setShowDoors] = useState(true);
-  const [showAssets, setShowAssets] = useState(true);
-  const [showRoute, setShowRoute] = useState(true);
-
-  // User Current Location State
-  const [userLocation, setUserLocation] = useState<UserLocation>({
-    spaceId: 'proc-factory-dev-003-F0-S001',
-    spaceName: 'Production zone H-A1',
-    floorId: 'proc-factory-dev-003-F0',
-    position: [-7.25, 8.55],
+  const [effectsEnabled, setEffectsEnabled] = useState(true);
+  const reducedMotion = useReducedMotion();
+  const animateEffects = effectsEnabled && !reducedMotion;
+  const [catalog, setCatalog] = useState<BuildingSummary[]>(presets),
+    [server, setServer] = useState(false),
+    [voiceAvailable, setVoiceAvailable] = useState(false);
+  const [data, setData] = useState<BuildingData | null>(null),
+    [buildingId, setBuildingId] = useState(defaultId),
+    [floorId, setFloorId] = useState(""),
+    [liveData, setLiveData] = useState(false);
+  const [loading, setLoading] = useState(true),
+    [notice, setNotice] = useState(""),
+    [busy, setBusy] = useState(false);
+  const [mapState, setMapState] = useState<MapState>(emptyMapState),
+    [location, setLocation] = useState<Location | null>(null),
+    [selection, setSelection] = useState<Selection>(null);
+  const [layers, setLayers] = useState<Layers>({
+    labels: true,
+    openings: false,
+    assets: true,
+    route: true,
   });
-  const [isSettingLocation, setIsSettingLocation] = useState<boolean>(false);
-
-  // Route State (Step 5)
-  const [activeRoute, setActiveRoute] = useState<RouteAction | null>(null);
-  const [routeUnderstood, setRouteUnderstood] = useState<string | null>(null);
-  const [showRoutePanel, setShowRoutePanel] = useState<boolean>(true);
-
-  // Action States (Step 6)
-  const [highlightedSpaceIds, setHighlightedSpaceIds] = useState<Set<string>>(new Set());
-  const [highlightedAssetIds, setHighlightedAssetIds] = useState<Set<string>>(new Set());
-  const [closedElementIds, setClosedElementIds] = useState<Set<string>>(new Set());
-  const [addedDoors, setAddedDoors] = useState<Opening[]>([]);
-
-  // Chat Panel State (Step 6)
-  const [chatMinimized, setChatMinimized] = useState(false);
-  const [inputQuery, setInputQuery] = useState('');
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: 'msg-init',
-      sender: 'agent',
-      text: 'Hello! I am your indoor assistant. Ask me for routes, room locations, or building closures.',
-      timestamp: '12:00',
-    },
-  ]);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
-
-  // Voice Controls State (Step 9)
-  const [isListening, setIsListening] = useState(false);
-  const [ttsEnabled, setTtsEnabled] = useState(true);
-  const recognitionRef = useRef<any>(null);
-
-  // Polish State (Step 10: 3D Isometric View & Navigation Step Walkthrough)
-  const [isIsometric, setIsIsometric] = useState(false);
-  const [activeStepIndex, setActiveStepIndex] = useState<number | null>(null);
-  const [isPlayingNav, setIsPlayingNav] = useState(false);
-
-  // Pan and Zoom State
-  const [zoom, setZoom] = useState(1.0);
-  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState(false);
-  const dragStartRef = useRef<{ clientX: number; clientY: number; panX: number; panY: number }>({
-    clientX: 0,
-    clientY: 0,
-    panX: 0,
-    panY: 0,
-  });
-
-  const svgRef = useRef<SVGSVGElement | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  // Auto-scroll chat to latest message
+  const [expandedMap, setExpandedMap] = useState(false);
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  // Execute chat actions in UI
-  const applyActions = useCallback((actions: ChatAction[]) => {
-    for (const act of actions) {
-      if (act.type === 'route') {
-        setActiveRoute(act);
-        setShowRoute(true);
-        setShowRoutePanel(true);
-      } else if (act.type === 'highlight') {
-        if (act.space_ids && act.space_ids.length > 0) {
-          setHighlightedSpaceIds(new Set(act.space_ids));
-        }
-        if (act.asset_ids && act.asset_ids.length > 0) {
-          setHighlightedAssetIds(new Set(act.asset_ids));
-        }
-      } else if (act.type === 'closed') {
-        setClosedElementIds((prev) => {
-          const next = new Set(prev);
-          for (const id of act.element_ids) {
-            next.add(id);
-          }
-          return next;
-        });
-      } else if (act.type === 'door_added') {
-        setAddedDoors((prev) => [...prev, act.opening]);
-      }
-    }
-  }, []);
-
-  // Check Live Server Connection (Step 7)
-  const checkServer = useCallback(() => {
-    fetch(`${SERVER_URL}/buildings`)
-      .then((res) => {
-        if (!res.ok) throw new Error('Live server unreachable');
-        return res.json();
-      })
-      .then((bList: ServerBuildingSummary[]) => {
-        setServerOnline(true);
-        if (Array.isArray(bList) && bList.length > 0) {
-          setServerBuildings(bList);
-        }
-      })
-      .catch(() => {
-        setServerOnline(false);
-      });
-  }, []);
-
-  useEffect(() => {
-    checkServer();
-    const timer = setInterval(checkServer, 10000);
-    return () => clearInterval(timer);
-  }, [checkServer]);
-
-  // Load building by ID or URL (Step 7: GET /buildings/{id} replaces static files when online)
-  const loadBuilding = useCallback(
-    (buildingId: string) => {
-      setLoading(true);
-      setError(null);
-
-      const fetchPromise = serverOnline
-        ? fetch(`${SERVER_URL}/buildings/${buildingId}`)
-            .then((res) => {
-              if (!res.ok) throw new Error('Live server building fetch error');
-              return res.json();
-            })
-            .catch(() => {
-              const preset = PRESET_BUILDINGS.find((b) => b.id === buildingId);
-              const targetFile = preset ? preset.file : `/buildings/${buildingId}.json`;
-              return fetch(targetFile).then((r) => r.json());
-            })
-        : (() => {
-            const preset = PRESET_BUILDINGS.find((b) => b.id === buildingId);
-            const targetFile = preset ? preset.file : `/buildings/${buildingId}.json`;
-            return fetch(targetFile)
-              .then((r) => {
-                if (!r.ok) return fetch('/sample.json');
-                return r;
-              })
-              .then((r) => r.json());
-          })();
-
-      fetchPromise
-        .then((json: BuildingData) => {
-          setData(json);
-          setSelectedBuildingId(buildingId);
-          const ground = json.floors.find((f) => f.level === 0) || json.floors[0];
-          if (ground) {
-            setSelectedFloorId(ground.id);
-          }
-          const initialSpace =
-            json.spaces?.find((s) => s.floor_id === ground?.id && s.polygon?.length >= 3) ||
-            json.spaces?.[0];
-          if (initialSpace) {
-            const { centroid } = getPolygonMetrics(initialSpace.polygon);
-            const initialName = initialSpace.name || (initialSpace.ref ? `Room ${initialSpace.ref}` : initialSpace.id);
-            setUserLocation({
-              spaceId: initialSpace.id,
-              spaceName: initialName,
-              floorId: initialSpace.floor_id,
-              position: centroid,
-            });
-          }
-          setZoom(1.0);
-          setPan({ x: 0, y: 0 });
-          setHighlightedSpaceIds(new Set());
-          setHighlightedAssetIds(new Set());
-          setClosedElementIds(new Set());
-          setAddedDoors([]);
-          setLoading(false);
-        })
-        .catch((err) => {
-          setError(err.message || 'Error loading building data');
-          setLoading(false);
-        });
-    },
-    [serverOnline]
-  );
-
-  // Initial load
-  useEffect(() => {
-    loadBuilding('proc-factory-dev-003');
-  }, [loadBuilding]);
-
-  // Step 9: Text-to-Speech (TTS)
-  const speakText = useCallback(
-    async (text: string) => {
-      if (!text || !ttsEnabled) return;
-      // Strip markdown syntax for natural voice reading
-      const cleanText = text.replace(/[*_#`[\]()]/g, '').trim();
-      if (!cleanText) return;
-
-      // Try Backend /tts if live server is reachable
-      if (serverOnline) {
-        try {
-          const resp = await fetch(`${SERVER_URL}/tts`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: cleanText }),
-          });
-          if (resp.ok) {
-            const blob = await resp.blob();
-            const audioUrl = URL.createObjectURL(blob);
-            const audio = new Audio(audioUrl);
-            await audio.play();
-            return;
-          }
-        } catch (e) {
-          console.warn('Backend /tts request failed, falling back to Web Speech Synthesis:', e);
-        }
-      }
-
-      // Fallback to browser Web Speech API SpeechSynthesis
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(cleanText);
-        utterance.rate = 1.0;
-        utterance.pitch = 1.0;
-        utterance.lang = 'en-US';
-        window.speechSynthesis.speak(utterance);
-      }
-    },
-    [serverOnline, ttsEnabled]
-  );
-
-  // Fallback Mock Dispatcher
-  const fallbackMockDispatch = useCallback(
-    (text: string) => {
-      const lower = text.toLowerCase();
-      let mockFile = '/mock/chat_route.json';
-
-      // 0. Manual Location Change Queries & Guidance
-      if (
-        /\b(how (can|do) i (manually )?(change|set|update) (my|the|current) location|change (my )?location)\b/i.test(
-          text
-        )
-      ) {
-        const reply = `You can change your current location in 3 convenient ways:\n1. **Dropdown Selector**: Click the **📍 Location** dropdown in the top header to select any room.\n2. **Map Pin Mode**: Click the **📍 Pin** button in the floating controls on the map, then click directly on any room on the floor plan.\n3. **Chat / Voice Command**: Type or say e.g. *"I am in Office 0.23"* or *"Set location to Room 0.22"*.\n\nYour location beacon (pulsing blue dot) updates instantly and all routes will navigate starting from your new position!`;
-        const res: ChatResponse = {
-          reply,
-          understood: 'How to change location guide',
-          needs_clarification: false,
-          actions: [],
-        };
-        const agentMsg: ChatMessage = {
-          id: `agent-${Date.now()}`,
-          sender: 'agent',
-          text: res.reply,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          response: res,
-        };
-        setMessages((prev) => [...prev, agentMsg]);
-        if (res.understood) setRouteUnderstood(res.understood);
-        speakText('You can change your location using the header dropdown, the map pin button, or by saying I am in room name.');
-        return;
-      }
-
-      const locationMatch = text.match(
-        /\b(?:i am in|i am at|i'm in|i'm at|my location is|set my location to|set location to|move me to|change location to|current location is)\s+(?:the\s+)?(.+)/i
-      );
-      if (locationMatch) {
-        const targetQuery = locationMatch[1].trim().toLowerCase().replace(/[.!?]+$/, '');
-        const matchedSpace = data?.spaces?.find((s) => {
-          const sName = (s.name || '').toLowerCase();
-          const sRef = (s.ref || '').toLowerCase();
-          const sId = (s.id || '').toLowerCase();
-          return (
-            sName === targetQuery ||
-            sRef === targetQuery ||
-            sName.includes(targetQuery) ||
-            (targetQuery.length >= 3 && sRef.includes(targetQuery)) ||
-            targetQuery.includes(sRef) ||
-            sId.includes(targetQuery)
-          );
-        });
-
-        if (matchedSpace) {
-          const { centroid } = getPolygonMetrics(matchedSpace.polygon);
-          const spaceLabel =
-            matchedSpace.name || (matchedSpace.ref ? `Room ${matchedSpace.ref}` : matchedSpace.id);
-          setUserLocation({
-            spaceId: matchedSpace.id,
-            spaceName: spaceLabel,
-            floorId: matchedSpace.floor_id,
-            position: centroid,
-          });
-          if (matchedSpace.floor_id !== selectedFloorId) {
-            setSelectedFloorId(matchedSpace.floor_id);
-          }
-          const targetFloor = data?.floors?.find((f) => f.id === matchedSpace.floor_id);
-          const floorLabel = targetFloor ? targetFloor.name : 'Floor';
-          const reply = `Your location has been updated to **${spaceLabel}** on ${floorLabel}. All route calculations will now start from here.`;
-          const res: ChatResponse = {
-            reply,
-            understood: `Current location updated to: ${spaceLabel}`,
-            needs_clarification: false,
-            actions: [
-              {
-                type: 'highlight',
-                space_ids: [matchedSpace.id],
-              },
-            ],
-          };
-          const agentMsg: ChatMessage = {
-            id: `agent-${Date.now()}`,
-            sender: 'agent',
-            text: res.reply,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            response: res,
-          };
-          setMessages((prev) => [...prev, agentMsg]);
-          if (res.understood) setRouteUnderstood(res.understood);
-          applyActions(res.actions);
-          speakText(`Location updated to ${spaceLabel}`);
-          return;
-        }
-      }
-
-      // Ensure "closest" or "closet" does NOT falsely trigger the closure handler
-      const hasCloseWord =
-        /\b(closed|close|shut|broken|out of order|maintenance)\b/i.test(text) ||
-        /is (closed|shut)/i.test(text);
-      const hasReopenWord =
-        /\b(reopen|reopened|open again|now open)\b/i.test(text) ||
-        /is (now open|reopened)/i.test(text);
-      const isProximityOnly = /\b(closest|closet|near|nearest|proximity)\b/i.test(text);
-
-      const isClosureRequest = (hasCloseWord || hasReopenWord) && !isProximityOnly;
-
-      if (isClosureRequest) {
-        // Match specific space or door in current building
-        const targetSpace = data?.spaces?.find(
-          (s) =>
-            (s.name && lower.includes(s.name.toLowerCase())) ||
-            (s.ref && lower.includes(s.ref.toLowerCase())) ||
-            lower.includes(s.id.toLowerCase())
-        );
-        const targetDoor = data?.openings?.find(
-          (o) =>
-            (o.name && lower.includes(o.name.toLowerCase())) ||
-            lower.includes(o.id.toLowerCase())
-        );
-        const matched = targetSpace || targetDoor;
-
-        if (matched) {
-          const isReopen =
-            (lower.includes('open') || lower.includes('reopen')) &&
-            !lower.includes('close') &&
-            !lower.includes('shut');
-          const matchedName =
-            matched.name || ('ref' in matched ? (matched as any).ref : matched.id);
-
-          if (isReopen) {
-            setClosedElementIds((prev) => {
-              const next = new Set(prev);
-              next.delete(matched.id);
-              return next;
-            });
-            const res: ChatResponse = {
-              reply: `${matchedName} is now reopened and back in service.`,
-              understood: `${matchedName} reopened`,
-              needs_clarification: false,
-              actions: [],
-            };
-            const agentMsg: ChatMessage = {
-              id: `agent-${Date.now()}`,
-              sender: 'agent',
-              text: res.reply,
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              response: res,
-            };
-            setMessages((prev) => [...prev, agentMsg]);
-            if (res.understood) setRouteUnderstood(res.understood);
-            speakText(res.reply);
-            return;
-          } else {
-            setClosedElementIds((prev) => {
-              const next = new Set(prev);
-              next.add(matched.id);
-              return next;
-            });
-            const res: ChatResponse = {
-              reply: `${matchedName} is now marked as closed. Route recalculations will redirect traffic away from it.`,
-              understood: `${matchedName} closed for maintenance`,
-              needs_clarification: false,
-              actions: [
-                {
-                  type: 'closed',
-                  element_ids: [matched.id],
-                },
-              ],
-            };
-            const agentMsg: ChatMessage = {
-              id: `agent-${Date.now()}`,
-              sender: 'agent',
-              text: res.reply,
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              response: res,
-            };
-            setMessages((prev) => [...prev, agentMsg]);
-            if (res.understood) setRouteUnderstood(res.understood);
-            speakText(res.reply);
-            return;
-          }
-        } else {
-          mockFile = '/mock/chat_closed.json';
-        }
-      } else if (
-        /\b(exit|exits|outside|way out|leave the building|evacuate|escape|egress)\b/i.test(text)
-      ) {
-        // Smart Exit & Step-Free / Wheelchair Route Handler
-        const isStepFree = /\b(without stairs|no stairs|step[- ]free|wheelchair|accessible|pram|crutches|trolley)\b/i.test(text);
-        const currentFloorId = selectedFloorId || data?.floors?.[0]?.id;
-        const currentFloor = data?.floors?.find((f) => f.id === currentFloorId);
-        const groundFloor = data?.floors?.find((f) => f.level === 0) || data?.floors?.[0];
-        const isUpperFloor = Boolean(currentFloor && currentFloor.level > 0);
-
-        const liftConnector = data?.vertical_connectors?.find((v) => v.kind === 'lift' || v.step_free);
-        const stairConnector = data?.vertical_connectors?.find((v) => v.kind === 'stairs');
-
-        const candidateExits = (data?.openings || []).filter((o) => {
-          const isEntrance = o.kind === 'entrance';
-          const toOutside = Array.isArray(o.space_ids) && o.space_ids.includes('outside');
-          const hasExitName = Boolean(o.name && /\b(exit|entrance|outside)\b/i.test(o.name));
-          const stepFreeOk = !isStepFree || o.step_free !== false;
-          return (isEntrance || toOutside || hasExitName) && stepFreeOk;
-        });
-
-        if (candidateExits.length > 0) {
-          const startPt: [number, number] = userLocation ? userLocation.position : [-7.25, 8.55];
-          const currentLocName = userLocation ? userLocation.spaceName : 'Production zone H-A1';
-
-          candidateExits.sort((a, b) => {
-            const aGround = a.floor_id === groundFloor?.id ? 0 : 1;
-            const bGround = b.floor_id === groundFloor?.id ? 0 : 1;
-            if (aGround !== bGround) return aGround - bGround;
-            const da = (a.position[0] - startPt[0]) ** 2 + (a.position[1] - startPt[1]) ** 2;
-            const db = (b.position[0] - startPt[0]) ** 2 + (b.position[1] - startPt[1]) ** 2;
-            return da - db;
-          });
-
-          const bestExit = candidateExits[0];
-          const exitSpaceId = bestExit.space_ids?.find((s) => s !== 'outside');
-          const exitRoom = data?.spaces?.find((s) => s.id === exitSpaceId);
-          const exitRoomName = exitRoom ? exitRoom.name || exitRoom.ref : 'the main corridor';
-          const exitLabel = bestExit.name || `Exit (${exitRoomName})`;
-
-          const destPt: [number, number] = [bestExit.position[0], bestExit.position[1]];
-          const dx = destPt[0] - startPt[0];
-          const dy = destPt[1] - startPt[1];
-          const approxDist = Math.max(
-            Math.round(Math.sqrt(dx * dx + dy * dy) * 1.18),
-            20
-          );
-
-          const waypoints: [number, number][] = [startPt];
-          if (destPt[0] < -20) {
-            waypoints.push([-14.5, startPt[1]]);
-            waypoints.push([-21.75, destPt[1]]);
-            waypoints.push(destPt);
-          } else if (destPt[0] > 0) {
-            waypoints.push([0.0, 2.718]);
-            waypoints.push([5.0, 2.718]);
-            waypoints.push([5.0, destPt[1]]);
-            waypoints.push(destPt);
-          } else {
-            waypoints.push([(startPt[0] + destPt[0]) / 2, (startPt[1] + destPt[1]) / 2]);
-            waypoints.push(destPt);
-          }
-
-          if (groundFloor && selectedFloorId !== groundFloor.id) {
-            setSelectedFloorId(groundFloor.id);
-          }
-
-          const floorName = groundFloor ? groundFloor.name : 'Ground floor';
-          const floorLvl = groundFloor ? String(groundFloor.level) : '0';
-
-          const replyText = isStepFree
-            ? `The closest exit without stairs is ${exitLabel} on ${floorName} (${approxDist} m away). Here is the step-free route to the outside avoiding all stairs.`
-            : `The closest exit is ${exitLabel} on ${floorName} (${approxDist} m away). Here is the fastest route to it.`;
-
-          const understoodText = isStepFree
-            ? `Step-free route to closest exit: ${exitLabel} (avoiding stairs)`
-            : `Route to closest exit: ${exitLabel}`;
-
-          const steps = isUpperFloor
-            ? [
-                `Start on ${currentFloor?.name || 'upper floor'}.`,
-                isStepFree
-                  ? `Take the ${liftConnector?.name || 'Office lift'} down to ${floorName} (step-free elevator, no stairs).`
-                  : `Take the ${stairConnector?.name || 'Office staircase'} down to ${floorName}.`,
-                `Exit the connector into ${exitRoomName}.`,
-                `Head straight to ${exitLabel} to exit the building.`,
-              ]
-            : [
-                `Start in ${currentLocName} on ${floorName}.`,
-                isStepFree
-                  ? `Follow the level, step-free passage toward ${exitRoomName}.`
-                  : `Proceed toward ${exitRoomName}.`,
-                `Pass through ${exitRoomName} (no stairs required).`,
-                `Exit the building through ${exitLabel} to the outside.`,
-              ];
-
-          const res: ChatResponse = {
-            reply: replyText,
-            understood: understoodText,
-            needs_clarification: false,
-            actions: [
-              {
-                type: 'highlight',
-                space_ids: exitRoom ? [exitRoom.id] : [],
-              },
-              {
-                type: 'route',
-                length_m: approxDist,
-                steps,
-                floors: {
-                  [floorLvl]: waypoints,
-                },
-              },
-            ],
-          };
-
-          const agentMsg: ChatMessage = {
-            id: `agent-${Date.now()}`,
-            sender: 'agent',
-            text: res.reply,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            response: res,
-          };
-          setMessages((prev) => [...prev, agentMsg]);
-          if (res.understood) setRouteUnderstood(res.understood);
-          applyActions(res.actions);
-          speakText(res.reply);
-          return;
-        }
-      } else if (
-        lower.includes('meeting') ||
-        lower.includes('conference') ||
-        lower.includes('printer') ||
-        lower.includes('coffee') ||
-        lower.includes('kitchen') ||
-        lower.includes('cafeteria') ||
-        lower.includes('canteen') ||
-        lower.includes('toilet') ||
-        lower.includes('restroom') ||
-        lower.includes('bathroom') ||
-        lower.includes('wc') ||
-        lower.includes('washroom') ||
-        lower.includes('lab') ||
-        lower.includes('locker') ||
-        lower.includes('server') ||
-        lower.includes('office') ||
-        lower.includes('work') ||
-        lower.includes('desk') ||
-        lower.includes('facility') ||
-        lower.includes('facilities') ||
-        lower.includes('place') ||
-        lower.includes('cnc') ||
-        lower.includes('mill') ||
-        lower.includes('waterjet')
-      ) {
-        // Smart Nearest Asset / Room Navigation & Highlight with dynamic descriptors
-        let targetDescription = 'destination';
-        let searchTerm = 'meeting';
-        let isAssetTarget = false;
-
-        if (/\b(toilet|restroom|bathroom|wc|washroom)\b/i.test(text)) {
-          targetDescription = lower.includes('restroom')
-            ? 'restroom'
-            : lower.includes('bathroom')
-            ? 'bathroom'
-            : 'toilet';
-          searchTerm = 'toilet';
-        } else if (/\b(meeting|conference|boardroom)\b/i.test(text)) {
-          targetDescription = lower.includes('place for')
-            ? 'place for a meeting'
-            : lower.includes('conference')
-            ? 'conference room'
-            : 'meeting room';
-          searchTerm = 'meeting';
-        } else if (/\b(coffee)\b/i.test(text)) {
-          targetDescription = 'coffee machine';
-          searchTerm = 'coffee';
-          isAssetTarget = true;
-        } else if (/\b(kitchen|cafeteria|canteen|break\s*room)\b/i.test(text)) {
-          targetDescription = lower.includes('cafeteria')
-            ? 'cafeteria'
-            : lower.includes('canteen')
-            ? 'canteen'
-            : 'kitchen';
-          searchTerm = 'kitchen';
-        } else if (/\b(printer|copier|scanner|print)\b/i.test(text)) {
-          targetDescription = 'printer';
-          searchTerm = 'printer';
-          isAssetTarget = true;
-        } else if (/\b(quality\s*lab|lab|laboratory)\b/i.test(text)) {
-          targetDescription = 'quality lab';
-          searchTerm = 'quality';
-        } else if (/\b(server\s*room|server)\b/i.test(text)) {
-          targetDescription = 'server room';
-          searchTerm = 'server';
-        } else if (/\b(locker\s*room|locker)\b/i.test(text)) {
-          targetDescription = 'locker room';
-          searchTerm = 'locker';
-        } else if (/\b(office|offices|work|workspace|workstation|desk|place to work|somewhere to work|facility|facilities)\b/i.test(text)) {
-          targetDescription = lower.includes('work')
-            ? 'place to work'
-            : lower.includes('desk')
-            ? 'desk'
-            : lower.includes('facility')
-            ? 'facility'
-            : 'office';
-          searchTerm = 'office';
-        } else if (/\b(cnc|mill)\b/i.test(text)) {
-          targetDescription = 'CNC mill';
-          searchTerm = 'cnc';
-          isAssetTarget = true;
-        } else if (/\b(waterjet)\b/i.test(text)) {
-          targetDescription = 'waterjet cutter';
-          searchTerm = 'waterjet';
-          isAssetTarget = true;
-        }
-
-        const currentFloorId = selectedFloorId || data?.floors?.[0]?.id;
-
-        let matchedAsset = undefined;
-        if (isAssetTarget && data?.assets) {
-          const matchingAssets = data.assets.filter((a) => {
-            const t = (a.type || '').toLowerCase();
-            const n = (a.name || '').toLowerCase();
-            const c = (a.category || '').toLowerCase();
-            return t.includes(searchTerm) || n.includes(searchTerm) || c.includes(searchTerm);
-          });
-          matchingAssets.sort((a, b) => {
-            const aOnCurrent = a.floor_id === currentFloorId ? 0 : 1;
-            const bOnCurrent = b.floor_id === currentFloorId ? 0 : 1;
-            if (aOnCurrent !== bOnCurrent) return aOnCurrent - bOnCurrent;
-            const userPt = userLocation ? userLocation.position : [-7.25, 8.55];
-            const da = (a.position[0] - userPt[0]) ** 2 + (a.position[1] - userPt[1]) ** 2;
-            const db = (b.position[0] - userPt[0]) ** 2 + (b.position[1] - userPt[1]) ** 2;
-            return da - db;
-          });
-          matchedAsset = matchingAssets[0];
-        }
-
-        const candidateRooms = data?.spaces?.filter((s) => {
-          const n = (s.name || '').toLowerCase();
-          const rt = (s.room_type || '').toLowerCase();
-          if (searchTerm === 'toilet') {
-            return (
-              n.includes('toilet') ||
-              n.includes('restroom') ||
-              n.includes('bathroom') ||
-              n.includes('wc') ||
-              n.includes('washroom') ||
-              rt.includes('toilet') ||
-              rt.includes('restroom')
-            );
-          }
-          if (searchTerm === 'meeting') {
-            return (
-              n.includes('meeting') ||
-              n.includes('conference') ||
-              rt.includes('meeting') ||
-              rt.includes('conference')
-            );
-          }
-          if (searchTerm === 'office') {
-            return n.includes('office') || rt.includes('office');
-          }
-          if (searchTerm === 'kitchen' || searchTerm === 'coffee') {
-            return (
-              n.includes('kitchen') ||
-              n.includes('cafeteria') ||
-              n.includes('canteen') ||
-              rt.includes('kitchen')
-            );
-          }
-          if (searchTerm === 'quality') {
-            return n.includes('quality') || n.includes('lab') || rt.includes('quality') || rt.includes('lab');
-          }
-          return n.includes(searchTerm) || rt.includes(searchTerm);
-        }) || [];
-
-        // Check if user specifically requested a destination room reference (e.g. "to Office 1.11" or "0.23")
-        const toMatch = text.match(/\bto\s+(?:the\s+)?(?:office\s+|room\s+)?([0-9]+\.[0-9]+|[hH]-[a-cA-C][1-5])/i);
-        const specificRefMatch = toMatch || text.match(/\b([0-9]+\.[0-9]+)\b/);
-        const targetRef = specificRefMatch ? specificRefMatch[1].toLowerCase() : null;
-        if (targetRef) {
-          const matchedByRef = data?.spaces?.find((s) => s.ref?.toLowerCase() === targetRef || s.name?.toLowerCase().includes(targetRef));
-          if (matchedByRef) {
-            candidateRooms.unshift(matchedByRef);
-          }
-        }
-
-        // Sort candidate rooms by current floor first, then distance from user's current location
-        candidateRooms.sort((a, b) => {
-          if (targetRef) {
-            if (a.ref?.toLowerCase() === targetRef) return -1;
-            if (b.ref?.toLowerCase() === targetRef) return 1;
-          }
-          const aOnCurrent = a.floor_id === currentFloorId ? 0 : 1;
-          const bOnCurrent = b.floor_id === currentFloorId ? 0 : 1;
-          if (aOnCurrent !== bOnCurrent) return aOnCurrent - bOnCurrent;
-          const ca = getPolygonMetrics(a.polygon).centroid;
-          const cb = getPolygonMetrics(b.polygon).centroid;
-          const userPt = userLocation ? userLocation.position : [-7.25, 8.55];
-          const da = (ca[0] - userPt[0]) ** 2 + (ca[1] - userPt[1]) ** 2;
-          const db = (cb[0] - userPt[0]) ** 2 + (cb[1] - userPt[1]) ** 2;
-          return da - db;
-        });
-
-        const assetRoom = matchedAsset
-          ? data?.spaces?.find((s) => s.id === matchedAsset.space_id)
-          : candidateRooms[0];
-
-        if (matchedAsset || assetRoom) {
-          const roomName = assetRoom ? assetRoom.name || assetRoom.ref : targetDescription;
-          const floorId = matchedAsset ? matchedAsset.floor_id : assetRoom?.floor_id;
-          const assetFloor = data?.floors?.find((f) => f.id === floorId);
-          const floorName = assetFloor ? assetFloor.name : 'Ground floor';
-          const floorLvl = assetFloor ? String(assetFloor.level) : '0';
-
-          const isRouteQuery =
-            lower.includes('route') ||
-            lower.includes('navigate') ||
-            lower.includes('nearest') ||
-            lower.includes('closest') ||
-            lower.includes('place for') ||
-            lower.includes('how to get') ||
-            lower.includes('take me') ||
-            lower.includes('way to') ||
-            lower.includes('directions') ||
-            lower.includes('where is') ||
-            lower.includes('where are') ||
-            lower.includes('find');
-
-          // Determine destination coordinate: asset position or space centroid
-          const destPt: [number, number] = matchedAsset
-            ? [matchedAsset.position[0], matchedAsset.position[1]]
-            : assetRoom
-            ? getPolygonMetrics(assetRoom.polygon).centroid
-            : [2.5, 7.58];
-
-          if (isRouteQuery) {
-            if (floorId && selectedFloorId !== floorId) {
-              setSelectedFloorId(floorId);
-            }
-
-            const startPt: [number, number] = userLocation ? userLocation.position : [-7.25, 8.55];
-            const currentLocName = userLocation ? userLocation.spaceName : 'Production zone H-A1';
-
-            const dx = destPt[0] - startPt[0];
-            const dy = destPt[1] - startPt[1];
-            const approxDist = Math.max(
-              Math.round(Math.sqrt(dx * dx + dy * dy) * 1.2),
-              15
-            );
-
-            const waypoints: [number, number][] = [startPt];
-            if (startPt[0] < -5 && destPt[0] > 0) {
-              waypoints.push([0.0, 2.718]);
-              waypoints.push([5.0, 2.718]);
-              waypoints.push([5.0, destPt[1]]);
-            } else if (startPt[0] > 0 && destPt[0] < -5) {
-              waypoints.push([5.0, startPt[1]]);
-              waypoints.push([5.0, 2.718]);
-              waypoints.push([0.0, 2.718]);
-            } else {
-              waypoints.push([(startPt[0] + destPt[0]) / 2, (startPt[1] + destPt[1]) / 2]);
-            }
-            waypoints.push(destPt);
-
-            const label = matchedAsset ? matchedAsset.name : roomName;
-            const replyText = matchedAsset
-              ? `The nearest ${targetDescription} is ${label} in ${roomName} on ${floorName} (${approxDist} m away). Here is the fastest route to it.`
-              : `The closest ${targetDescription} is ${roomName} on ${floorName} (${approxDist} m away). Here is the fastest route to it.`;
-
-            const understoodText = matchedAsset
-              ? `Route to nearest ${targetDescription}: ${label} in ${roomName}`
-              : `Route to closest ${targetDescription}: ${roomName}`;
-
-            const res: ChatResponse = {
-              reply: replyText,
-              understood: understoodText,
-              needs_clarification: false,
-              actions: [
-                {
-                  type: 'highlight',
-                  space_ids: assetRoom ? [assetRoom.id] : [],
-                  asset_ids: matchedAsset ? [matchedAsset.id] : [],
-                },
-                {
-                  type: 'route',
-                  length_m: approxDist,
-                  steps: [
-                    `Start in ${currentLocName} on ${floorName}.`,
-                    `Proceed toward the hallway corridor.`,
-                    `Follow directions to ${label}.`,
-                    `Arrive at ${label}.`,
-                  ],
-                  floors: {
-                    [floorLvl]: waypoints,
-                  },
-                },
-              ],
-            };
-
-            const agentMsg: ChatMessage = {
-              id: `agent-${Date.now()}`,
-              sender: 'agent',
-              text: res.reply,
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              response: res,
-            };
-            setMessages((prev) => [...prev, agentMsg]);
-            if (res.understood) setRouteUnderstood(res.understood);
-            applyActions(res.actions);
-            speakText(res.reply);
-            return;
-          } else {
-            // Locate / Highlight without route
-            if (floorId && selectedFloorId !== floorId) {
-              setSelectedFloorId(floorId);
-            }
-            const label = matchedAsset ? matchedAsset.name : roomName;
-            const replyText = matchedAsset
-              ? `${label} is located in ${roomName} on ${floorName}. I have highlighted it on the map for you.`
-              : `${roomName} is located on ${floorName}. I have highlighted it on the map for you.`;
-
-            const understoodText = matchedAsset
-              ? `Locating ${label} in ${roomName}`
-              : `Locating ${roomName}`;
-
-            const res: ChatResponse = {
-              reply: replyText,
-              understood: understoodText,
-              needs_clarification: false,
-              actions: [
-                {
-                  type: 'highlight',
-                  space_ids: assetRoom ? [assetRoom.id] : [],
-                  asset_ids: matchedAsset ? [matchedAsset.id] : [],
-                },
-              ],
-            };
-            const agentMsg: ChatMessage = {
-              id: `agent-${Date.now()}`,
-              sender: 'agent',
-              text: res.reply,
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              response: res,
-            };
-            setMessages((prev) => [...prev, agentMsg]);
-            if (res.understood) setRouteUnderstood(res.understood);
-            speakText(res.reply);
-            return;
-          }
-        }
-        mockFile = '/mock/chat_highlight.json';
-      } else if (
-        lower.includes('where') ||
-        lower.includes('find')
-      ) {
-        mockFile = '/mock/chat_highlight.json';
-      } else if (lower.includes('door') || lower.includes('add') || lower.includes('wall')) {
-        mockFile = '/mock/chat_door_added.json';
-      } else if (lower.includes('?') || lower.includes('office')) {
-        mockFile = '/mock/chat_clarify.json';
-      }
-
-      fetch(mockFile)
-        .then((res) => res.json())
-        .then((res: ChatResponse) => {
-          const isStepFree = /\b(without stairs|no stairs|step[- ]free|wheelchair|accessible|pram|crutches|trolley)\b/i.test(text);
-          if (isStepFree && res.actions) {
-            res.reply = res.reply.replace(/take the staircase/gi, 'take the Office lift (step-free)')
-                                 .replace(/via Office staircase/gi, 'via Office lift (step-free)');
-            if (res.understood) {
-              res.understood = res.understood.replace(/via Office staircase/gi, 'via Office lift (step-free)');
-            }
-            res.actions.forEach((act) => {
-              if (act.type === 'route' && act.steps) {
-                act.steps = act.steps.map((st) =>
-                  st.replace(/Use Office staircase \(stairs\)/i, 'Take Office lift (step-free elevator, avoiding stairs)')
-                    .replace(/into Staircase 0\.17/i, 'into Lift 0.18')
-                    .replace(/staircase/gi, 'Office lift')
-                );
-              }
-            });
-          }
-          const agentMsg: ChatMessage = {
-            id: `agent-${Date.now()}`,
-            sender: 'agent',
-            text: res.reply,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            response: res,
-          };
-          setMessages((prev) => [...prev, agentMsg]);
-          if (res.understood) setRouteUnderstood(res.understood);
-          applyActions(res.actions);
-          speakText(res.reply);
-        })
-        .catch((err) => console.error('Error fetching mock response:', err));
-    },
-    [data, userLocation, applyActions, speakText]
-  );
-
-  // Pick a mock response from dropdown or quick chips
-  const handleSelectMock = useCallback(
-    (mockId: string) => {
-      const opt = MOCK_OPTIONS.find((m) => m.id === mockId);
-      if (!opt) return;
-
-      fetch(opt.file)
-        .then((res) => {
-          if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to load mock`);
-          return res.json();
-        })
-        .then((res: ChatResponse) => {
-          const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-          const userMsg: ChatMessage = {
-            id: `user-${Date.now()}`,
-            sender: 'user',
-            text: opt.prompt,
-            timestamp: time,
-          };
-          const agentMsg: ChatMessage = {
-            id: `agent-${Date.now()}`,
-            sender: 'agent',
-            text: res.reply,
-            timestamp: time,
-            response: res,
-          };
-          setMessages((prev) => [...prev, userMsg, agentMsg]);
-          if (res.understood) setRouteUnderstood(res.understood);
-          applyActions(res.actions);
-          speakText(res.reply);
-        })
-        .catch((err) => console.error('Error applying mock:', err));
-    },
-    [applyActions, speakText]
-  );
-
-  // Send message on Enter, click, or voice (Step 7 & 9)
-  const handleSendMessage = useCallback(
-    (overrideText?: string) => {
-      const rawText = typeof overrideText === 'string' ? overrideText : inputQuery;
-      if (!rawText.trim()) return;
-      const text = rawText.trim();
-      setInputQuery('');
-
-      const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      const userMsg: ChatMessage = {
-        id: `user-${Date.now()}`,
-        sender: 'user',
-        text,
-        timestamp: time,
-      };
-      setMessages((prev) => [...prev, userMsg]);
-
-      if (serverOnline) {
-        fetch(`${SERVER_URL}/buildings/${selectedBuildingId}/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            session_id: getSessionId(),
-            message: text,
-          }),
-        })
-          .then((res) => {
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return res.json();
-          })
-          .then((res: ChatResponse) => {
-            const agentMsg: ChatMessage = {
-              id: `agent-${Date.now()}`,
-              sender: 'agent',
-              text: res.reply,
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              response: res,
-            };
-            setMessages((prev) => [...prev, agentMsg]);
-            if (res.understood) setRouteUnderstood(res.understood);
-            applyActions(res.actions);
-            speakText(res.reply);
-          })
-          .catch((err) => {
-            console.warn('Live chat failed, using fallback mock dispatch:', err);
-            fallbackMockDispatch(text);
-          });
-      } else {
-        fallbackMockDispatch(text);
-      }
-    },
-    [inputQuery, serverOnline, selectedBuildingId, applyActions, fallbackMockDispatch, speakText]
-  );
-
-  // Step 9: Web Speech API Recognition (STT Microphone)
-  const toggleListening = useCallback(() => {
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert(
-        'Speech Recognition is not supported by your current browser. Please use Google Chrome or Microsoft Edge.'
-      );
-      return;
-    }
-
-    if (isListening) {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.stop();
-        } catch {
-          // ignore
-        }
-      }
-      setIsListening(false);
-      return;
-    }
-
-    try {
-      const recognition = new SpeechRecognition();
-      recognition.lang = 'en-US';
-      recognition.continuous = false;
-      recognition.interimResults = false;
-      recognition.maxAlternatives = 1;
-
-      recognition.onstart = () => {
-        setIsListening(true);
-      };
-
-      recognition.onresult = (event: any) => {
-        const transcript = event.results?.[0]?.[0]?.transcript;
-        if (transcript) {
-          setInputQuery(transcript);
-          handleSendMessage(transcript);
-        }
-        setIsListening(false);
-      };
-
-      recognition.onerror = (event: any) => {
-        console.warn('Speech recognition error:', event.error);
-        setIsListening(false);
-      };
-
-      recognition.onend = () => {
-        setIsListening(false);
-      };
-
-      recognitionRef.current = recognition;
-      recognition.start();
-    } catch (err) {
-      console.error('Failed to initialize speech recognition:', err);
-      setIsListening(false);
-    }
-  }, [isListening, handleSendMessage]);
-
-  // Step 10: Click a lift, stair, space, or door to toggle closed (sends "Lift 1 is closed" to chat)
-  const handleToggleElementClosure = useCallback(
-    (id: string, label: string, isCurrentlyClosed: boolean) => {
-      const nextClosed = !isCurrentlyClosed;
-      const msg = nextClosed
-        ? `${label} is closed for maintenance`
-        : `${label} is now open`;
-
-      setClosedElementIds((prev) => {
-        const copy = new Set(prev);
-        if (nextClosed) {
-          copy.add(id);
-        } else {
-          copy.delete(id);
-        }
-        return copy;
-      });
-
-      handleSendMessage(msg);
-    },
-    [handleSendMessage]
-  );
-
-  // Handle Custom File Upload
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setLoading(true);
-    setError(null);
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const text = event.target?.result as string;
-        const parsed = JSON.parse(text) as BuildingData;
-        if (!parsed.building || !parsed.spaces || !parsed.floors) {
-          throw new Error('Invalid building schema: missing building, spaces, or floors');
-        }
-        setData(parsed);
-        setSelectedBuildingId(parsed.building.id);
-        const ground = parsed.floors.find((f) => f.level === 0) || parsed.floors[0];
-        if (ground) {
-          setSelectedFloorId(ground.id);
-        }
-        const initialSpace =
-          parsed.spaces?.find((s) => s.floor_id === ground?.id && s.polygon?.length >= 3) ||
-          parsed.spaces?.[0];
-        if (initialSpace) {
-          const { centroid } = getPolygonMetrics(initialSpace.polygon);
-          const initialName = initialSpace.name || (initialSpace.ref ? `Room ${initialSpace.ref}` : initialSpace.id);
-          setUserLocation({
-            spaceId: initialSpace.id,
-            spaceName: initialName,
-            floorId: initialSpace.floor_id,
-            position: centroid,
-          });
-        }
-        setZoom(1.0);
-        setPan({ x: 0, y: 0 });
-        setActiveRoute(null);
-        setHighlightedSpaceIds(new Set());
-        setHighlightedAssetIds(new Set());
-        setClosedElementIds(new Set());
-        setAddedDoors([]);
-        setLoading(false);
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        setError(`Failed to parse uploaded building: ${message}`);
-        setLoading(false);
-      }
+    if (!expandedMap) return;
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const escape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExpandedMap(false);
     };
-    reader.readAsText(file);
-    e.target.value = '';
+    window.addEventListener("keydown", escape);
+    return () => {
+      document.body.style.overflow = overflow;
+      window.removeEventListener("keydown", escape);
+    };
+  }, [expandedMap]);
+  const [view, setView] = useState<"2d" | "3d">("3d"),
+    [preview, setPreview] = useState(false),
+    [activeStep, setActiveStep] = useState(0);
+  const [directoryMode, setDirectoryMode] = useState<"rooms" | "objects">(
+    "rooms",
+  );
+  const [assetFilter, setAssetFilter] = useState("all");
+  const [directoryQuery, setDirectoryQuery] = useState(""),
+    [buildingQuery, setBuildingQuery] = useState(""),
+    [buildingPicker, setBuildingPicker] = useState(false);
+  const [panel, setPanel] = useState<Sheet>(null),
+    [sidebar, setSidebar] = useState(true);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => [welcome()]),
+    [draft, setDraft] = useState(""),
+    [spokenAnswers, setSpokenAnswers] = useState(false);
+  const [avatar, setAvatar] = useState(0),
+    [stepFree, setStepFree] = useState(false);
+  const [understood, setUnderstood] = useState(""),
+    [clarification, setClarification] = useState(false);
+  const session = useRef(crypto.randomUUID()),
+    loadVersion = useRef(0),
+    requestAbort = useRef<AbortController | null>(null),
+    busyRef = useRef(false);
+  const chatEnd = useRef<HTMLDivElement>(null);
+  const canChat = server && liveData && !loading;
+
+  const reset = useCallback((building: BuildingData, live: boolean) => {
+    requestAbort.current?.abort();
+    session.current = crypto.randomUUID();
+    busyRef.current = false;
+    setBusy(false);
+    setData(building);
+    setBuildingId(building.building.id);
+    setLiveData(live);
+    setFloorId(
+      (building.floors.find((f) => f.level === 0) ?? building.floors[0]).id,
+    );
+    setMapState(emptyMapState);
+    setLocation(null);
+    setSelection(null);
+    setPreview(false);
+    setActiveStep(0);
+    setDirectoryQuery("");
+    setAssetFilter("all");
+    setMessages([welcome()]);
+    setUnderstood("");
+    setClarification(false);
+    setStepFree(false);
+  }, []);
+  const loadBuilding = useCallback(
+    async (id: string, online: boolean) => {
+      const version = ++loadVersion.current;
+      setLoading(true);
+      setNotice("");
+      setBuildingPicker(false);
+      requestAbort.current?.abort();
+      try {
+        let building: BuildingData,
+          live = false;
+        if (online) {
+          try {
+            building = parseBuilding(
+              await request(`/buildings/${encodeURIComponent(id)}`, {
+                signal: AbortSignal.timeout(10000),
+              }),
+            );
+            live = true;
+          } catch (error) {
+            if (!presets.some((p) => p.id === id)) throw error;
+            const response = await fetch(`/buildings/${id}.json`);
+            if (!response.ok) throw new Error("Building could not be loaded.");
+            building = parseBuilding(await response.json());
+          }
+        } else {
+          const response = await fetch(`/buildings/${id}.json`);
+          if (!response.ok)
+            throw new Error("Connect the agent to load this building.");
+          building = parseBuilding(await response.json());
+        }
+        if (version === loadVersion.current) reset(building, live);
+      } catch (error) {
+        if (version === loadVersion.current)
+          setNotice(
+            error instanceof Error
+              ? error.message
+              : "Could not load the building.",
+          );
+      } finally {
+        if (version === loadVersion.current) setLoading(false);
+      }
+    },
+    [reset],
+  );
+  const connect = useCallback(async () => {
+    try {
+      const [buildings, status] = await Promise.all([
+        request<BuildingSummary[]>("/buildings", {
+          signal: AbortSignal.timeout(4000),
+        }),
+        request<VoiceStatus>("/voice/status", {
+          signal: AbortSignal.timeout(4000),
+        }).catch(() => null),
+      ]);
+      setCatalog(buildings);
+      setServer(true);
+      setVoiceAvailable(
+        !!status?.configured &&
+          !!status?.speech_to_text &&
+          !!status?.text_to_speech,
+      );
+      return true;
+    } catch {
+      setCatalog(presets);
+      setServer(false);
+      setVoiceAvailable(false);
+      return false;
+    }
+  }, []);
+  useEffect(() => {
+    let mounted = true;
+    void Promise.resolve()
+      .then(connect)
+      .then((online) => {
+        if (mounted) void loadBuilding(defaultId, online);
+      });
+    return () => {
+      mounted = false;
+      requestAbort.current?.abort();
+    };
+  }, [connect, loadBuilding]);
+  useEffect(() => {
+    chatEnd.current?.scrollIntoView({
+      behavior: matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "instant"
+        : "smooth",
+      block: "nearest",
+    });
+  }, [messages, busy]);
+
+  const send = useCallback(
+    async (text: string, displayText = text): Promise<string | null> => {
+      if (!text.trim() || busyRef.current) return null;
+      if (!canChat) {
+        setNotice(
+          "Connect this building to the agent to enable questions and routing.",
+        );
+        return null;
+      }
+      const currentSession = session.current,
+        controller = new AbortController();
+      requestAbort.current = controller;
+      busyRef.current = true;
+      setBusy(true);
+      setNotice("");
+      setDraft("");
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          sender: "user",
+          text: displayText.trim(),
+          timestamp: time(),
+        },
+      ]);
+      try {
+        const response: ChatResponse = await chat(
+          buildingId,
+          currentSession,
+          text.trim(),
+          controller.signal,
+        );
+        if (session.current !== currentSession) return null;
+        if (
+          typeof response.reply !== "string" ||
+          !Array.isArray(response.actions)
+        )
+          throw new Error(
+            "The agent returned an unexpected response. Please retry.",
+          );
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            sender: "agent",
+            text: response.reply,
+            response,
+            timestamp: time(),
+          },
+        ]);
+        setMapState((prev) => applyMapActions(prev, response.actions));
+        setUnderstood(response.understood ?? "");
+        setClarification(response.needs_clarification);
+        if (
+          response.actions.some((a) =>
+            ["route", "closed", "door_added"].includes(a.type),
+          )
+        ) {
+          setPreview(false);
+          setActiveStep(0);
+        }
+        const highlighted = response.actions.find(
+          (a) => a.type === "highlight",
+        );
+        if (highlighted?.type === "highlight") {
+          const space = data?.spaces.find((s) =>
+            highlighted.space_ids?.includes(s.id),
+          );
+          const asset = data?.assets?.find((a) =>
+            highlighted.asset_ids?.includes(a.id),
+          );
+          if (space || asset) {
+            setFloorId((space ?? asset)!.floor_id);
+            setSelection(
+              space
+                ? { kind: "space", id: space.id }
+                : { kind: "asset", id: asset!.id },
+            );
+          }
+        }
+        for (const action of response.actions)
+          if (action.type === "building_created") {
+            setNotice(
+              "The agent created a building. Choose it from the refreshed building list.",
+            );
+            void connect();
+          }
+        return response.reply;
+      } catch (error) {
+        if (!controller.signal.aborted && session.current === currentSession)
+          setNotice(
+            error instanceof Error
+              ? error.message
+              : "The agent is unavailable. Please retry.",
+          );
+        return null;
+      } finally {
+        if (session.current === currentSession) {
+          busyRef.current = false;
+          setBusy(false);
+        }
+      }
+    },
+    [buildingId, canChat, data, connect],
+  );
+
+  const voice = useVoice(buildingId, send, setNotice);
+  const submitText = async (text: string, displayText = text) => {
+    if (voice.active) voice.stop();
+    const reply = await send(text, displayText);
+    if (reply && spokenAnswers && voiceAvailable)
+      await voice.speak(reply).catch((error) => setNotice(error.message));
+  };
+  const switchBuilding = (id: string) => {
+    voice.stop();
+    void loadBuilding(id, server);
+  };
+  const floor = data?.floors.find((f) => f.id === floorId) ?? data?.floors[0];
+  const floors = useMemo(
+    () => [...(data?.floors ?? [])].sort((a, b) => a.level - b.level),
+    [data],
+  );
+  const spaces = useMemo(
+    () => (data?.spaces ?? []).filter((s) => s.floor_id === floorId),
+    [data, floorId],
+  );
+  const results = useMemo(() => {
+    const query = directoryQuery.toLowerCase().trim();
+    return (query ? (data?.spaces ?? []) : spaces)
+      .filter(
+        (s) =>
+          !query ||
+          `${label(s)} ${category(s)} ${s.id}`.toLowerCase().includes(query),
+      )
+      .sort((a, b) =>
+        label(a).localeCompare(label(b), undefined, { numeric: true }),
+      );
+  }, [data, spaces, directoryQuery]);
+  const objectResults = useMemo(() => {
+    const q = directoryQuery.trim().toLowerCase();
+    return (data?.assets ?? [])
+      .filter(
+        (a) =>
+          (q || a.floor_id === floorId) &&
+          (assetFilter === "all" || a.category === assetFilter) &&
+          (!q ||
+            `${a.name} ${a.type} ${a.category} ${a.id}`
+              .toLowerCase()
+              .includes(q)),
+      )
+      .sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { numeric: true }),
+      );
+  }, [data, directoryQuery, floorId, assetFilter]);
+  const assetCategories = useMemo(
+    () =>
+      [
+        ...new Set(
+          (data?.assets ?? [])
+            .map((a) => a.category)
+            .filter((c): c is string => !!c),
+        ),
+      ].sort(),
+    [data],
+  );
+  const directoryCount =
+    directoryMode === "rooms" ? results.length : objectResults.length;
+  const selectedSpace =
+    selection?.kind === "space"
+      ? data?.spaces.find((s) => s.id === selection.id)
+      : undefined;
+  const selectedConnector =
+    selection?.kind === "connector"
+      ? data?.vertical_connectors?.find((c) => c.id === selection.id)
+      : undefined;
+  const connectorGeometry = useMemo(
+    () => (data ? connectorLayouts(data) : []),
+    [data],
+  );
+  const selectedConnectorLayout = connectorGeometry.find(
+    (c) => c.connector.id === selectedConnector?.id,
+  );
+  const selectedAsset =
+    selection?.kind === "asset"
+      ? data?.assets?.find((a) => a.id === selection.id)
+      : undefined;
+  const assetDescription = selectedAsset ? describeAsset(selectedAsset) : null;
+  const selectedDoor =
+    selection?.kind === "opening"
+      ? [...(data?.openings ?? []), ...mapState.doors].find(
+          (d) => d.id === selection.id,
+        )
+      : undefined;
+  const displayedClosures = useMemo(
+    () => (data ? visibleClosures(data, mapState.closed) : new Set<string>()),
+    [data, mapState.closed],
+  );
+  const closedConnector = data?.vertical_connectors?.find(
+    (c) =>
+      mapState.closed.includes(c.id) &&
+      c.space_ids.includes(selection?.id ?? ""),
+  );
+  const closureId = closedConnector?.id ?? selection?.id;
+  const selectedName = selectedSpace
+    ? label(selectedSpace)
+    : selectedConnector?.name ||
+      selectedAsset?.name ||
+      selectedDoor?.name ||
+      selectedDoor?.kind ||
+      selection?.id;
+  const currentLocation = data?.spaces.find((s) => s.id === location?.spaceId);
+  const route = mapState.route;
+  const phase = busy ? "thinking" : voice.phase;
+  const phaseLabels = {
+    idle: "Meet your building guide",
+    connecting: "Opening your microphone",
+    listening: "I’m listening",
+    hearing: "Go on, I’m listening",
+    transcribing: "Finding your words",
+    thinking: "Finding the way",
+    speaking: "Here’s your answer",
+    error: "Let’s try that again",
+  };
+  const selectSpace = (space: Space) => {
+    setFloorId(space.floor_id);
+    setSelection({ kind: "space", id: space.id });
+  };
+  const selectAsset = (asset: Asset) => {
+    setLayers((l) => ({ ...l, assets: true }));
+    setFloorId(asset.floor_id);
+    setSelection({ kind: "asset", id: asset.id });
+  };
+  const setHere = (space: Space) => {
+    setLocation({
+      spaceId: space.id,
+      floorId: space.floor_id,
+      position: interiorPoint(space.polygon),
+    });
+    if (canChat)
+      void submitText(
+        `I am currently in ${label(space)} (space id ${space.id}). ${stepFree ? "I need step-free routes." : ""}`,
+        `I’m in ${label(space)}.${stepFree ? " I need step-free routes." : ""}`,
+      );
+  };
+  const goTo = (space: Space) => {
+    if (!currentLocation) {
+      setNotice("Choose your starting room, then select “I’m here”.");
+      return;
+    }
+    void submitText(
+      `Route from ${label(currentLocation)} (space id ${currentLocation.id}) to ${label(space)} (space id ${space.id})${stepFree ? ", step-free with no stairs" : ""}.`,
+      `Take me from ${label(currentLocation)} to ${label(space)}${stepFree ? ", using a step-free route" : ""}.`,
+    );
+  };
+  const upload = async (file: File) => {
+    try {
+      if (file.size > 20 * 1024 * 1024)
+        throw new Error("Choose a building JSON smaller than 20 MB.");
+      const building = parseBuilding(JSON.parse(await file.text()));
+      ++loadVersion.current;
+      voice.stop();
+      setLoading(false);
+      reset(building, false);
+      setPanel(null);
+      setNotice(
+        "Map imported. Both views use your file’s geometry. Register the building on the agent server to enable questions.",
+      );
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "This file could not be read.",
+      );
+    }
+  };
+  const refresh = async () => {
+    voice.stop();
+    const online = await connect();
+    if (online) await loadBuilding(buildingId, true);
+    else
+      setNotice(
+        "The agent is offline. Bundled maps and local imports remain available.",
+      );
   };
 
-  // Sorted Floors by level ascending
-  const sortedFloors = useMemo(() => {
-    if (!data?.floors) return [];
-    return [...data.floors].sort((a, b) => a.level - b.level);
-  }, [data]);
-
-  // Current Floor
-  const currentFloor = useMemo(() => {
-    if (!data?.floors) return null;
-    return data.floors.find((f) => f.id === selectedFloorId) || sortedFloors[0] || null;
-  }, [data, selectedFloorId, sortedFloors]);
-
-  // Spaces for current floor
-  const currentSpaces = useMemo(() => {
-    if (!data || !currentFloor) return [];
-    return data.spaces.filter((s) => s.floor_id === currentFloor.id);
-  }, [data, currentFloor]);
-
-  // Map of space_id -> ref/name for fast door label lookups
-  const spaceMap = useMemo(() => {
-    const map = new Map<string, Space>();
-    if (data?.spaces) {
-      for (const s of data.spaces) {
-        map.set(s.id, s);
-      }
-    }
-    return map;
-  }, [data]);
-
-  // Openings on current floor
-  const currentOpenings = useMemo(() => {
-    if (!data?.openings || !currentFloor) return [];
-    return data.openings.filter((o) => o.floor_id === currentFloor.id);
-  }, [data, currentFloor]);
-
-  const { doors, entrances } = useMemo(() => {
-    const d: Opening[] = [];
-    const e: Opening[] = [];
-    for (const op of currentOpenings) {
-      if (op.kind === 'entrance' || op.space_ids.includes('outside')) {
-        e.push(op);
-      } else {
-        d.push(op);
-      }
-    }
-    return { doors: d, entrances: e };
-  }, [currentOpenings]);
-
-  // Added doors on current floor
-  const currentAddedDoors = useMemo(() => {
-    if (!currentFloor) return [];
-    return addedDoors.filter((d) => d.floor_id === currentFloor.id);
-  }, [addedDoors, currentFloor]);
-
-  // Assets on current floor
-  const currentAssets = useMemo(() => {
-    if (!data?.assets || !currentFloor) return [];
-    return data.assets.filter((a) => a.floor_id === currentFloor.id);
-  }, [data, currentFloor]);
-
-  // Compute Bounding Box across all spaces on current floor
-  const bounds = useMemo(() => {
-    if (currentSpaces.length === 0) {
-      if (data?.spaces && data.spaces.length > 0) {
-        let minX = Infinity;
-        let maxX = -Infinity;
-        let minY = Infinity;
-        let maxY = -Infinity;
-        for (const space of data.spaces) {
-          for (const [x, y] of space.polygon) {
-            if (x < minX) minX = x;
-            if (x > maxX) maxX = x;
-            if (y < minY) minY = y;
-            if (y > maxY) maxY = y;
-          }
-        }
-        return {
-          minX,
-          maxX,
-          minY,
-          maxY,
-          width: Math.max(maxX - minX, 1),
-          height: Math.max(maxY - minY, 1),
-        };
-      }
-      return { minX: 0, maxX: 100, minY: 0, maxY: 100, width: 100, height: 100 };
-    }
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
-
-    for (const space of currentSpaces) {
-      for (const [x, y] of space.polygon) {
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-      }
-    }
-
-    return {
-      minX,
-      maxX,
-      minY,
-      maxY,
-      width: Math.max(maxX - minX, 1),
-      height: Math.max(maxY - minY, 1),
-    };
-  }, [currentSpaces, data]);
-
-  // Reset Pan/Zoom whenever floor changes
-  useEffect(() => {
-    setZoom(1.0);
-    setPan({ x: 0, y: 0 });
-    setHoveredEntity(null);
-  }, [selectedFloorId]);
-
-  // Dynamic metrics for scaling lines, dots, triangles, and fonts
-  const buildingScale = useMemo(() => {
-    return Math.max(bounds.width, bounds.height);
-  }, [bounds]);
-
-  const strokeWidth = useMemo(() => {
-    return Math.max(buildingScale * 0.0025, 0.15);
-  }, [buildingScale]);
-
-  const baseFontSize = useMemo(() => {
-    return Math.max(buildingScale * 0.012, 0.85);
-  }, [buildingScale]);
-
-  const doorRadius = useMemo(() => {
-    return Math.max(buildingScale * 0.0055, 0.35);
-  }, [buildingScale]);
-
-  const entranceSize = useMemo(() => {
-    return Math.max(buildingScale * 0.014, 1.1);
-  }, [buildingScale]);
-
-  // Base ViewBox with 4% padding
-  const baseViewBoxMetrics = useMemo(() => {
-    const pad = Math.max(bounds.width, bounds.height) * 0.04;
-    const baseW = bounds.width + 2 * pad;
-    const baseH = bounds.height + 2 * pad;
-    const baseCenterX = bounds.minX + bounds.width / 2;
-    const baseCenterY = bounds.minY + bounds.height / 2;
-    return { baseW, baseH, baseCenterX, baseCenterY };
-  }, [bounds]);
-
-  // Current viewBox based on zoom and pan
-  const viewBoxStr = useMemo(() => {
-    const { baseW, baseH, baseCenterX, baseCenterY } = baseViewBoxMetrics;
-    const currentW = baseW / zoom;
-    const currentH = baseH / zoom;
-    const currentVx = (baseCenterX + pan.x) - currentW / 2;
-    const currentVy = (baseCenterY + pan.y) - currentH / 2;
-    return `${currentVx} ${currentVy} ${currentW} ${currentH}`;
-  }, [baseViewBoxMetrics, zoom, pan]);
-
-  // Route points on the currently displayed floor
-  const currentFloorRoute = useMemo(() => {
-    if (!activeRoute || !currentFloor) return null;
-    const levelKey = String(currentFloor.level);
-    const rawPoints = activeRoute.floors[levelKey];
-    if (!rawPoints || rawPoints.length < 2) return null;
-
-    const flippedPoints = rawPoints.map(([x, y]) => [x, bounds.maxY + bounds.minY - y] as [number, number]);
-    const pointsStr = flippedPoints.map(([x, y]) => `${x},${y}`).join(' ');
-
-    const floorLevels = Object.keys(activeRoute.floors);
-    const isGlobalStartFloor = levelKey === floorLevels[0];
-    const isGlobalEndFloor = levelKey === floorLevels[floorLevels.length - 1];
-
-    const startPoint = flippedPoints[0];
-    const endPoint = flippedPoints[flippedPoints.length - 1];
-
-    return {
-      pointsStr,
-      flippedPoints,
-      isGlobalStartFloor,
-      isGlobalEndFloor,
-      startPoint,
-      endPoint,
-    };
-  }, [activeRoute, currentFloor, bounds]);
-
-  // Route floor keys sorted
-  const routeFloorKeys = useMemo(() => {
-    if (!activeRoute?.floors) return [];
-    return Object.keys(activeRoute.floors).sort((a, b) => Number(a) - Number(b));
-  }, [activeRoute]);
-
-  // Step 10: Reset nav step player when route or building changes
-  useEffect(() => {
-    setActiveStepIndex(null);
-    setIsPlayingNav(false);
-  }, [activeRoute, selectedBuildingId]);
-
-  // Step 10: Step-by-Step Navigation Player Timer
-  useEffect(() => {
-    if (!isPlayingNav || !activeRoute || !activeRoute.steps || activeRoute.steps.length === 0) {
-      return;
-    }
-
-    const interval = setInterval(() => {
-      setActiveStepIndex((prev) => {
-        const next = prev === null ? 0 : prev + 1;
-        if (next >= activeRoute.steps.length) {
-          setIsPlayingNav(false);
-          return prev;
-        }
-        return next;
-      });
-    }, 2400);
-
-    return () => clearInterval(interval);
-  }, [isPlayingNav, activeRoute]);
-
-  // Step 10: Highlight room/corridor for the current route step
-  const navHighlightedSpaceIds = useMemo(() => {
-    if (activeStepIndex === null || !activeRoute || !activeRoute.steps) {
-      return new Set<string>();
-    }
-    const currentStepText = activeRoute.steps[activeStepIndex] || '';
-    const lower = currentStepText.toLowerCase();
-
-    const ids = new Set<string>();
-    for (const space of currentSpaces) {
-      const ref = (space.ref || '').toLowerCase();
-      const name = (space.name || '').toLowerCase();
-      const id = space.id.toLowerCase();
-
-      if (
-        (ref && ref.length >= 2 && lower.includes(ref)) ||
-        (name && name.length >= 3 && lower.includes(name)) ||
-        (id && lower.includes(id))
-      ) {
-        ids.add(space.id);
-      }
-    }
-    return ids;
-  }, [activeStepIndex, activeRoute, currentSpaces]);
-
-  // Step 10: Auto-switch floor when navigation step reaches a different floor
-  useEffect(() => {
-    if (activeStepIndex === null || !activeRoute || !activeRoute.steps) return;
-    const currentStepText = activeRoute.steps[activeStepIndex] || '';
-    const lower = currentStepText.toLowerCase();
-
-    for (const floor of sortedFloors) {
-      const flName = floor.name.toLowerCase();
-      const flLvl = `floor ${floor.level}`;
-      const lvlLvl = `level ${floor.level}`;
-      if (
-        (lower.includes(flLvl) || lower.includes(lvlLvl) || lower.includes(flName)) &&
-        selectedFloorId !== floor.id
-      ) {
-        setSelectedFloorId(floor.id);
-        break;
-      }
-    }
-  }, [activeStepIndex, activeRoute, sortedFloors, selectedFloorId]);
-
-  // Pan and Zoom Event Handlers
-  const handleWheel = useCallback(
-    (e: React.WheelEvent<SVGSVGElement>) => {
-      e.preventDefault();
-      const svg = svgRef.current;
-      if (!svg) return;
-      const rect = svg.getBoundingClientRect();
-      const mouseRatioX = (e.clientX - rect.left) / rect.width;
-      const mouseRatioY = (e.clientY - rect.top) / rect.height;
-
-      const { baseW, baseH, baseCenterX, baseCenterY } = baseViewBoxMetrics;
-      const currentW = baseW / zoom;
-      const currentH = baseH / zoom;
-      const currentVx = (baseCenterX + pan.x) - currentW / 2;
-      const currentVy = (baseCenterY + pan.y) - currentH / 2;
-
-      const mouseSvgX = currentVx + mouseRatioX * currentW;
-      const mouseSvgY = currentVy + mouseRatioY * currentH;
-
-      const factor = e.deltaY < 0 ? 1.2 : 1 / 1.2;
-      const nextZoom = Math.min(Math.max(zoom * factor, 0.2), 50);
-
-      const nextW = baseW / nextZoom;
-      const nextH = baseH / nextZoom;
-
-      const nextVx = mouseSvgX - mouseRatioX * nextW;
-      const nextVy = mouseSvgY - mouseRatioY * nextH;
-
-      const nextPanX = (nextVx + nextW / 2) - baseCenterX;
-      const nextPanY = (nextVy + nextH / 2) - baseCenterY;
-
-      setZoom(nextZoom);
-      setPan({ x: nextPanX, y: nextPanY });
-    },
-    [baseViewBoxMetrics, zoom, pan]
-  );
-
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (e.button !== 0) return;
-    setIsDragging(true);
-    dragStartRef.current = {
-      clientX: e.clientX,
-      clientY: e.clientY,
-      panX: pan.x,
-      panY: pan.y,
-    };
-  }, [pan]);
-
-  const handleMouseMove = useCallback(
-    (e: React.MouseEvent) => {
-      if (hoveredEntity) {
-        setTooltipPos({ x: e.clientX, y: e.clientY });
-      }
-      if (!isDragging || !svgRef.current) return;
-
-      const rect = svgRef.current.getBoundingClientRect();
-      const { baseW, baseH } = baseViewBoxMetrics;
-      const currentW = baseW / zoom;
-      const currentH = baseH / zoom;
-
-      const dxScreen = e.clientX - dragStartRef.current.clientX;
-      const dyScreen = e.clientY - dragStartRef.current.clientY;
-
-      const dxSvg = dxScreen * (currentW / rect.width);
-      const dySvg = dyScreen * (currentH / rect.height);
-
-      setPan({
-        x: dragStartRef.current.panX - dxSvg,
-        y: dragStartRef.current.panY - dySvg,
-      });
-    },
-    [isDragging, hoveredEntity, baseViewBoxMetrics, zoom]
-  );
-
-  const handleMouseUp = useCallback(() => {
-    setIsDragging(false);
-  }, []);
-
-  const handleResetView = useCallback(() => {
-    setZoom(1.0);
-    setPan({ x: 0, y: 0 });
-  }, []);
-
-  const handleZoomIn = useCallback(() => {
-    setZoom((z) => Math.min(z * 1.3, 50));
-  }, []);
-
-  const handleZoomOut = useCallback(() => {
-    setZoom((z) => Math.max(z / 1.3, 0.2));
-  }, []);
-
-  if (loading) {
-    return (
-      <div className="state-container">
-        <div className="spinner"></div>
-        <p>Loading building floor plan...</p>
-      </div>
-    );
-  }
-
-  if (error || !data || !currentFloor) {
-    return (
-      <div className="state-container">
-        <p style={{ color: '#ef4444' }}>Error: {error || 'No floors found'}</p>
-        <button
-          type="button"
-          onClick={() => loadBuilding('proc-factory-dev-003')}
-          style={{
-            marginTop: '12px',
-            padding: '8px 16px',
-            background: '#3b82f6',
-            color: '#fff',
-            borderRadius: '6px',
-          }}
-        >
-          Load Default Building
-        </button>
-      </div>
-    );
-  }
-
   return (
-    <div className="app-container" onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
-      {/* Top Navigation Bar */}
-      <header className="app-header">
-        <div className="header-left">
-          <div className="brand-badge">
-            <svg className="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-              <polyline points="9 22 9 12 15 12 15 22" />
-            </svg>
-            Talk to Your Building
-          </div>
-
-          {/* Connection Status Pill (Live Server vs Mock Mode) */}
-          <div
-            className={`connection-status-pill ${serverOnline ? 'online' : 'offline'}`}
-            onClick={checkServer}
-            title={
-              serverOnline
-                ? 'Connected to live agent server on localhost:8000'
-                : 'Agent server offline — Click to retry connection to localhost:8000'
-            }
-          >
-            <span className="status-dot-pulse" />
-            <span>{serverOnline ? 'Live Server (8000)' : 'Mock Mode'}</span>
-          </div>
-
-          {/* Building Selector Dropdown & File Picker */}
-          <div className="building-picker-group">
-            <select
-              aria-label="Select Building"
-              value={selectedBuildingId}
-              onChange={(e) => loadBuilding(e.target.value)}
-              className="building-select"
-            >
-              {serverOnline && serverBuildings.length > 0
-                ? serverBuildings.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name} ({b.source})
-                    </option>
-                  ))
-                : PRESET_BUILDINGS.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name} ({b.badge})
-                    </option>
-                  ))}
-              {!PRESET_BUILDINGS.some((b) => b.id === selectedBuildingId) &&
-                !serverBuildings.some((b) => b.id === selectedBuildingId) && (
-                  <option value={selectedBuildingId}>Custom: {data.building.name}</option>
-                )}
-            </select>
-
-            {/* Custom JSON File Upload */}
-            <label className="upload-file-label" title="Upload any building.json file">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="17 8 12 3 7 8" />
-                <line x1="12" y1="3" x2="12" y2="15" />
-              </svg>
-              Upload
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".json"
-                className="upload-file-input"
-                onChange={handleFileUpload}
-              />
-            </label>
-          </div>
-
-          {/* Current Location Selector */}
-          <div className="location-picker-group" title="Change your current starting location">
-            <span>📍 Location:</span>
-            <select
-              aria-label="Select Current Location"
-              value={userLocation.spaceId}
-              onChange={(e) => {
-                const targetId = e.target.value;
-                const sp = data.spaces.find((s) => s.id === targetId);
-                if (sp) {
-                  const { centroid } = getPolygonMetrics(sp.polygon);
-                  const sLabel = sp.name || (sp.ref ? `Room ${sp.ref}` : sp.id);
-                  setUserLocation({
-                    spaceId: sp.id,
-                    spaceName: sLabel,
-                    floorId: sp.floor_id,
-                    position: centroid,
-                  });
-                  if (sp.floor_id !== selectedFloorId) {
-                    setSelectedFloorId(sp.floor_id);
-                  }
-                  const confirmMsg: ChatMessage = {
-                    id: `agent-loc-${Date.now()}`,
-                    sender: 'agent',
-                    text: `Your current location has been updated to **${sLabel}**.`,
-                    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                  };
-                  setMessages((prev) => [...prev, confirmMsg]);
-                  speakText(`Location set to ${sLabel}`);
-                }
-              }}
-              className="location-select"
-            >
-              {data.floors.map((floor) => {
-                const floorSpaces = data.spaces.filter((s) => s.floor_id === floor.id);
-                if (floorSpaces.length === 0) return null;
-                return (
-                  <optgroup key={floor.id} label={`Floor ${floor.level} (${floor.name})`}>
-                    {floorSpaces.map((sp) => {
-                      const label = sp.name ? `${sp.name} (${sp.ref || sp.type})` : (sp.ref ? `Room ${sp.ref}` : sp.id);
-                      return (
-                        <option key={sp.id} value={sp.id}>
-                          {label}
-                        </option>
-                      );
-                    })}
-                  </optgroup>
-                );
-              })}
-            </select>
-          </div>
-
-          <div className="building-title-group">
-            <h1 className="building-name">{data.building.name}</h1>
-            <div className="building-meta">
-              <span>{data.building.id}</span>
-              <span>•</span>
-              <span>Elevation: {currentFloor.elevation_m ?? 0}m</span>
-              <span>•</span>
-              <span>Height: {currentFloor.height_m ?? 3.5}m</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Floor Selector Tabs (sorted by level) */}
-        <div className="floor-tabs-container">
-          {sortedFloors.map((floor) => {
-            const isActive = floor.id === selectedFloorId;
-            return (
-              <button
-                key={floor.id}
-                type="button"
-                className={`floor-tab ${isActive ? 'active' : ''}`}
-                onClick={() => setSelectedFloorId(floor.id)}
-              >
-                <span className="floor-level-pill">L{floor.level}</span>
-                <span>{floor.name}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Stats on Right */}
-        <div className="header-right">
-          <div className="stats-pill">
-            <span>Spaces:</span>
-            <strong>{currentSpaces.length}</strong>
-          </div>
-          <div className="stats-pill">
-            <span>Doors:</span>
-            <strong>{doors.length + currentAddedDoors.length}</strong>
-          </div>
-          <div className="stats-pill">
-            <span>Assets:</span>
-            <strong>{currentAssets.length}</strong>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Floor Plan Viewport */}
-      <main
-        ref={containerRef}
-        className={`viewport-container ${isDragging ? 'is-dragging' : ''} ${isIsometric ? 'isometric-tilt' : ''}`}
-        onMouseMove={handleMouseMove}
-        onMouseDown={handleMouseDown}
+    <MotionConfig reducedMotion={effectsEnabled ? "user" : "always"}>
+      <RoutePlaybackProvider
+        data={data}
+        route={route}
+        location={location}
+        playing={preview}
+        setPlaying={setPreview}
+        onFloorChange={setFloorId}
+        onBegin={() => {
+          setSelection(null);
+          setLayers((l) => (l.route ? l : { ...l, route: true }));
+        }}
+        onClear={() => setMapState((s) => ({ ...s, route: null }))}
       >
-        {isIsometric && currentFloor && (
-          <div className="isometric-badge">
-            <span>⬡ 3D Isometric BIM View</span>
-            <span>• Floor {currentFloor.level} ({currentFloor.name})</span>
+        <div className="app-shell" data-motion={animateEffects ? "on" : "off"}>
+          <div className="ambient-wash" aria-hidden="true">
+            <Suspense fallback={null}>
+              <ShaderSurface enabled={animateEffects} />
+            </Suspense>
           </div>
-        )}
-
-        {/* Layer Toggles */}
-        <div className="layer-toggles-bar">
-          <button
-            type="button"
-            className={`layer-toggle-btn ${showLabels ? 'active' : ''}`}
-            onClick={() => setShowLabels(!showLabels)}
-          >
-            Labels
-          </button>
-          <button
-            type="button"
-            className={`layer-toggle-btn ${showDoors ? 'active' : ''}`}
-            onClick={() => setShowDoors(!showDoors)}
-          >
-            Doors ({doors.length + entrances.length + currentAddedDoors.length})
-          </button>
-          <button
-            type="button"
-            className={`layer-toggle-btn ${showAssets ? 'active' : ''}`}
-            onClick={() => setShowAssets(!showAssets)}
-          >
-            Assets ({currentAssets.length})
-          </button>
-          {activeRoute && (
-            <button
-              type="button"
-              className={`layer-toggle-btn ${showRoute ? 'active' : ''}`}
-              onClick={() => setShowRoute(!showRoute)}
+          <header className="topbar" inert={expandedMap}>
+            <a
+              className="wordmark"
+              href="#"
+              onClick={(e) => e.preventDefault()}
+              aria-label="Inside, your building guide"
             >
-              Route ({activeRoute.length_m}m)
-            </button>
-          )}
-        </div>
-
-        {isSettingLocation && (
-          <div className="setting-location-banner">
-            <span>📍 Click any room on the floor plan to set your current location</span>
-            <button
-              type="button"
-              className="banner-cancel-btn"
-              onClick={() => setIsSettingLocation(false)}
-            >
-              Cancel
-            </button>
-          </div>
-        )}
-
-        {/* Zoom & Fit Floating Controls */}
-        <div className="floating-controls">
-          <button type="button" className="control-btn" onClick={handleZoomIn} title="Zoom In (+)">
-            +
-          </button>
-          <div className="zoom-indicator">{Math.round(zoom * 100)}%</div>
-          <button type="button" className="control-btn" onClick={handleZoomOut} title="Zoom Out (-)">
-            −
-          </button>
-          <div className="control-divider" />
-          <button type="button" className="control-btn" onClick={handleResetView} title="Fit to View">
-            ⛶
-          </button>
-          <div className="control-divider" />
-          <button
-            type="button"
-            className={`control-btn ${isSettingLocation ? 'active' : ''}`}
-            onClick={() => setIsSettingLocation(!isSettingLocation)}
-            title={isSettingLocation ? 'Cancel Pin Mode' : 'Click to Set Current Location on Map'}
-            aria-label="Set Current Location"
-          >
-            📍 Pin
-          </button>
-          <div className="control-divider" />
-          <button
-            type="button"
-            className={`control-btn ${isIsometric ? 'active' : ''}`}
-            onClick={() => setIsIsometric(!isIsometric)}
-            title={isIsometric ? 'Switch to 2D Plan View' : 'Switch to 3D Isometric View'}
-            aria-label="Toggle 3D Isometric Mode"
-          >
-            {isIsometric ? '⬒ 2D' : '⬡ 3D'}
-          </button>
-        </div>
-
-        {/* Route Side Panel Toggle (if route exists and panel closed) */}
-        {activeRoute && !showRoutePanel && (
-          <button
-            type="button"
-            className="route-toggle-btn"
-            onClick={() => setShowRoutePanel(true)}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <circle cx="12" cy="12" r="10" />
-              <polyline points="12 6 12 12 16 14" />
-            </svg>
-            Route ({activeRoute.length_m} m)
-          </button>
-        )}
-
-        {/* Route Side Panel (Step 5 & 10) */}
-        {activeRoute && showRoutePanel && (
-          <aside className="route-panel">
-            <div className="route-panel-header">
-              <div className="route-title">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2.5">
-                  <path d="M4 19l4-14 4 14" />
-                  <path d="M12 5l4 14 4-14" />
-                </svg>
-                <span>Navigation Route</span>
-                <span className="route-distance-badge">{activeRoute.length_m} m</span>
-              </div>
-              <button
-                type="button"
-                className="close-panel-btn"
-                onClick={() => setShowRoutePanel(false)}
-                title="Hide route panel"
-              >
-                ×
-              </button>
+              <span className="brand-icon">
+                <Compass size={22} strokeWidth={1.4} />
+              </span>
+              inside<span className="brand-dot">.</span>
+            </a>
+            <div className="topbar-center">
+              <span className="topbar-orbit" aria-hidden="true">
+                <i />
+              </span>
+              Your building, brought to life
             </div>
-
-            {/* Floor Navigation Badges (e.g. "0 → 1" that switch floors) */}
-            {routeFloorKeys.length > 1 && (
-              <div className="route-floor-badges">
-                <span style={{ color: 'var(--text-dim)', fontWeight: 600 }}>Floors:</span>
-                {routeFloorKeys.map((lvl, idx) => {
-                  const targetFloor = sortedFloors.find((f) => f.level === Number(lvl));
-                  const isCurrent = currentFloor.level === Number(lvl);
-                  return (
-                    <span key={lvl} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                      {idx > 0 && <span style={{ color: 'var(--text-dim)' }}>→</span>}
-                      <button
-                        type="button"
-                        className={`route-floor-btn ${isCurrent ? 'active' : ''}`}
-                        onClick={() => {
-                          if (targetFloor) setSelectedFloorId(targetFloor.id);
-                        }}
-                      >
-                        L{lvl} {targetFloor ? `(${targetFloor.name})` : ''}
-                      </button>
-                    </span>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Understood Summary Chip */}
-            {routeUnderstood && (
-              <div className="route-understood-box">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                  <polyline points="22 4 12 14.01 9 11.01" />
-                </svg>
-                <span>{routeUnderstood}</span>
-              </div>
-            )}
-
-            {/* Numbered Steps with Interactive Playback Controls */}
-            {activeRoute.steps && activeRoute.steps.length > 0 && (
-              <>
-                <div className="route-nav-controls">
-                  <button
-                    type="button"
-                    className="route-nav-play-btn"
-                    onClick={() => {
-                      if (isPlayingNav) {
-                        setIsPlayingNav(false);
-                      } else {
-                        if (
-                          activeStepIndex === null ||
-                          activeStepIndex >= activeRoute.steps.length - 1
-                        ) {
-                          setActiveStepIndex(0);
-                        }
-                        setIsPlayingNav(true);
-                      }
-                    }}
-                    title={isPlayingNav ? 'Pause Walkthrough' : 'Play Animated Walkthrough'}
-                  >
-                    {isPlayingNav ? '⏸ Pause' : '▶ Walkthrough'}
-                  </button>
-
-                  <div className="route-nav-arrows">
-                    <button
-                      type="button"
-                      className="route-arrow-btn"
-                      disabled={activeStepIndex === null || activeStepIndex <= 0}
-                      onClick={() =>
-                        setActiveStepIndex((prev) =>
-                          prev !== null && prev > 0 ? prev - 1 : 0
-                        )
-                      }
-                      title="Previous Step"
-                    >
-                      ◀
-                    </button>
-                    <span
-                      style={{
-                        fontSize: '11px',
-                        color: 'var(--text-muted)',
-                        padding: '0 4px',
-                        fontWeight: 600,
-                      }}
-                    >
-                      {activeStepIndex !== null
-                        ? `${activeStepIndex + 1}/${activeRoute.steps.length}`
-                        : `0/${activeRoute.steps.length}`}
-                    </span>
-                    <button
-                      type="button"
-                      className="route-arrow-btn"
-                      disabled={
-                        activeStepIndex !== null &&
-                        activeStepIndex >= activeRoute.steps.length - 1
-                      }
-                      onClick={() =>
-                        setActiveStepIndex((prev) =>
-                          prev === null
-                            ? 0
-                            : Math.min(prev + 1, activeRoute.steps.length - 1)
-                        )
-                      }
-                      title="Next Step"
-                    >
-                      ▶
-                    </button>
-                  </div>
-                </div>
-
-                <div className="route-steps-container">
-                  {activeRoute.steps.map((step, idx) => {
-                    const isCurrentStep = activeStepIndex === idx;
-                    return (
-                      <div
-                        key={idx}
-                        className={`route-step-row ${isCurrentStep ? 'active' : ''}`}
-                        onClick={() => {
-                          setActiveStepIndex(idx);
-                          setIsPlayingNav(false);
-                        }}
-                        title="Click to view and highlight this step on the floor plan"
-                      >
-                        <span className="route-step-num">{idx + 1}</span>
-                        <span>{step}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-          </aside>
-        )}
-
-        {/* SVG Floor Plan Canvas */}
-        <svg
-          ref={svgRef}
-          className="floor-svg"
-          viewBox={viewBoxStr}
-          preserveAspectRatio="xMidYMid meet"
-          onWheel={handleWheel}
-        >
-          {/* Layer 1: Space Polygons */}
-          <g id="spaces-layer">
-            {currentSpaces.map((space) => {
-              const flippedPointsStr = space.polygon
-                .map(([x, y]) => {
-                  const flippedY = bounds.maxY + bounds.minY - y;
-                  return `${x},${flippedY}`;
-                })
-                .join(' ');
-
-              const typeClass = `type-${space.type.toLowerCase()}`;
-              const { area } = getPolygonMetrics(space.polygon);
-
-              // Step 6, 7 & 10: Action effects, closures & walkthrough highlights
-              const isClosed = closedElementIds.has(space.id);
-              const isHighlighted = highlightedSpaceIds.has(space.id);
-              const isStepHighlighted = navHighlightedSpaceIds.has(space.id);
-
-              const isLift = space.type === 'lift';
-              const isStair = space.type === 'stair';
-              const spaceLabel =
-                space.name ||
-                (isLift
-                  ? `Lift ${space.ref || space.id}`
-                  : isStair
-                  ? `Staircase ${space.ref || space.id}`
-                  : space.ref
-                  ? `Room ${space.ref}`
-                  : `Space ${space.id}`);
-
-              return (
-                <polygon
-                  key={space.id}
-                  id={space.id}
-                  points={flippedPointsStr}
-                  className={`space-polygon ${typeClass} ${isClosed ? 'closed-space' : ''} ${
-                    isHighlighted ? 'pulse-highlight' : ''
-                  } ${isStepHighlighted ? 'step-highlight-space' : ''}`}
-                  strokeWidth={strokeWidth}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (isSettingLocation) {
-                      const { centroid } = getPolygonMetrics(space.polygon);
-                      setUserLocation({
-                        spaceId: space.id,
-                        spaceName: spaceLabel,
-                        floorId: space.floor_id,
-                        position: centroid,
-                      });
-                      setIsSettingLocation(false);
-                      const confirmMsg: ChatMessage = {
-                        id: `agent-loc-${Date.now()}`,
-                        sender: 'agent',
-                        text: `Your current location has been updated to **${spaceLabel}**.`,
-                        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                      };
-                      setMessages((prev) => [...prev, confirmMsg]);
-                      speakText(`Location set to ${spaceLabel}`);
-                      return;
-                    }
-                    handleToggleElementClosure(space.id, spaceLabel, isClosed);
-                  }}
-                  onMouseEnter={(e) => {
-                    setHoveredEntity({ kind: 'space', space, area });
-                    setTooltipPos({ x: e.clientX, y: e.clientY });
-                  }}
-                  onMouseLeave={() => {
-                    setHoveredEntity(null);
-                    setTooltipPos(null);
-                  }}
-                />
-              );
-            })}
-          </g>
-
-          {/* Layer 2: Assets / Furniture */}
-          {showAssets && (
-            <g id="assets-layer">
-              {currentAssets.map((asset) => {
-                const posX = asset.position[0];
-                const posY = bounds.maxY + bounds.minY - asset.position[1];
-                const fp = parseFootprint(asset.footprint);
-                const w = fp ? fp.width_m : 1.0;
-                const d = fp ? fp.depth_m : 0.8;
-                const rot = fp ? -fp.rotation_deg : 0;
-
-                let categoryClass = 'asset-default';
-                const cat = (asset.category || '').toLowerCase();
-                const type = (asset.type || '').toLowerCase();
-                if (cat === 'furniture' || type.includes('desk') || type.includes('table') || type.includes('chair')) {
-                  categoryClass = 'asset-furniture';
-                } else if (cat === 'machine' || type.includes('cnc') || type.includes('mill') || type.includes('lathe')) {
-                  categoryClass = 'asset-machine';
-                } else if (type.includes('storage') || type.includes('cabinet') || type.includes('rack')) {
-                  categoryClass = 'asset-storage';
+            <div className="topbar-actions">
+              <button
+                className="motion-toggle"
+                aria-label="Animated visual effects"
+                aria-pressed={animateEffects}
+                disabled={!!reducedMotion}
+                title={
+                  reducedMotion
+                    ? "Your system’s reduced-motion preference is enabled"
+                    : animateEffects
+                      ? "Pause decorative animations"
+                      : "Resume decorative animations"
                 }
-
-                // Step 6 & 7: Action highlight pulse on assets
-                const isAssetHighlighted = highlightedAssetIds.has(asset.id);
-
-                return (
-                  <rect
-                    key={asset.id}
-                    id={asset.id}
-                    x={-w / 2}
-                    y={-d / 2}
-                    width={w}
-                    height={d}
-                    rx={Math.min(w, d) * 0.12}
-                    transform={`translate(${posX}, ${posY}) rotate(${rot})`}
-                    className={`asset-rect ${categoryClass} ${isAssetHighlighted ? 'pulse-highlight' : ''}`}
-                    onMouseEnter={(e) => {
-                      e.stopPropagation();
-                      setHoveredEntity({
-                        kind: 'asset',
-                        asset,
-                        dimensions: `${w.toFixed(1)}m × ${d.toFixed(1)}m`,
-                      });
-                      setTooltipPos({ x: e.clientX, y: e.clientY });
-                    }}
-                    onMouseLeave={() => {
-                      setHoveredEntity(null);
-                      setTooltipPos(null);
-                    }}
-                  />
-                );
-              })}
-            </g>
-          )}
-
-          {/* Layer 3: Openings (Doors, Entrances, Added Doors) */}
-          {showDoors && (
-            <g id="openings-layer">
-              {doors.map((door) => {
-                const doorX = door.position[0];
-                const doorY = bounds.maxY + bounds.minY - door.position[1];
-                const connectedRefs = door.space_ids
-                  .map((id) => spaceMap.get(id)?.ref || spaceMap.get(id)?.name || id)
-                  .filter(Boolean);
-
-                const isDoorClosed = closedElementIds.has(door.id);
-                const doorLabel =
-                  door.name ||
-                  (connectedRefs.length > 0
-                    ? `Door between ${connectedRefs.join(' and ')}`
-                    : `Door ${door.id}`);
-
-                return (
-                  <circle
-                    key={door.id}
-                    id={door.id}
-                    cx={doorX}
-                    cy={doorY}
-                    r={isDoorClosed ? doorRadius * 1.3 : doorRadius}
-                    className={`door-dot ${isDoorClosed ? 'closed-door' : ''}`}
-                    strokeWidth={strokeWidth * 0.5}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleToggleElementClosure(door.id, doorLabel, isDoorClosed);
-                    }}
-                    onMouseEnter={(e) => {
-                      e.stopPropagation();
-                      setHoveredEntity({ kind: 'door', opening: door, connectedRefs });
-                      setTooltipPos({ x: e.clientX, y: e.clientY });
-                    }}
-                    onMouseLeave={() => {
-                      setHoveredEntity(null);
-                      setTooltipPos(null);
-                    }}
-                  />
-                );
-              })}
-
-              {/* Added Doors (Step 6 & 7: new dot, green) */}
-              {currentAddedDoors.map((door) => {
-                const doorX = door.position[0];
-                const doorY = bounds.maxY + bounds.minY - door.position[1];
-                const connectedRefs = door.space_ids
-                  .map((id) => spaceMap.get(id)?.ref || spaceMap.get(id)?.name || id)
-                  .filter(Boolean);
-
-                return (
-                  <circle
-                    key={door.id}
-                    id={door.id}
-                    cx={doorX}
-                    cy={doorY}
-                    r={doorRadius * 1.3}
-                    className="added-door-dot"
-                    strokeWidth={strokeWidth * 0.7}
-                    onMouseEnter={(e) => {
-                      e.stopPropagation();
-                      setHoveredEntity({ kind: 'door', opening: door, connectedRefs });
-                      setTooltipPos({ x: e.clientX, y: e.clientY });
-                    }}
-                    onMouseLeave={() => {
-                      setHoveredEntity(null);
-                      setTooltipPos(null);
-                    }}
-                  />
-                );
-              })}
-
-              {/* Entrances */}
-              {entrances.map((ent) => {
-                const entX = ent.position[0];
-                const entY = bounds.maxY + bounds.minY - ent.position[1];
-                const s = entranceSize;
-                const triPoints = `${entX},${entY - s} ${entX - s * 0.866},${entY + s * 0.5} ${entX + s * 0.866},${entY + s * 0.5}`;
-
-                return (
-                  <polygon
-                    key={ent.id}
-                    id={ent.id}
-                    points={triPoints}
-                    className="entrance-triangle"
-                    strokeWidth={strokeWidth * 0.6}
-                    onMouseEnter={(e) => {
-                      e.stopPropagation();
-                      setHoveredEntity({ kind: 'entrance', opening: ent });
-                      setTooltipPos({ x: e.clientX, y: e.clientY });
-                    }}
-                    onMouseLeave={() => {
-                      setHoveredEntity(null);
-                      setTooltipPos(null);
-                    }}
-                  />
-                );
-              })}
-            </g>
-          )}
-
-          {/* Layer 4: Ref Labels at Centroid */}
-          {showLabels && (
-            <g id="labels-layer">
-              {currentSpaces.map((space) => {
-                if (!space.ref) return null;
-
-                const { centroid } = getPolygonMetrics(space.polygon);
-                const labelX = centroid[0];
-                const labelY = bounds.maxY + bounds.minY - centroid[1];
-
-                const xs = space.polygon.map((p) => p[0]);
-                const ys = space.polygon.map((p) => p[1]);
-                const w = Math.max(...xs) - Math.min(...xs);
-                const h = Math.max(...ys) - Math.min(...ys);
-                const minDim = Math.min(w, h);
-                const adaptiveFontSize = Math.min(baseFontSize, Math.max(minDim * 0.35, 0.45));
-
-                return (
-                  <text
-                    key={`label-${space.id}`}
-                    x={labelX}
-                    y={labelY}
-                    fontSize={adaptiveFontSize}
-                    className="space-label"
-                  >
-                    {space.ref}
-                  </text>
-                );
-              })}
-            </g>
-          )}
-
-          {/* Layer 5: Route Layer (Step 5) */}
-          {showRoute && currentFloorRoute && (
-            <g id="route-layer">
-              <polyline
-                points={currentFloorRoute.pointsStr}
-                className="route-casing"
-                strokeWidth={strokeWidth * 3.8}
-              />
-              <polyline
-                points={currentFloorRoute.pointsStr}
-                className="route-core"
-                strokeWidth={strokeWidth * 1.9}
-              />
-              {currentFloorRoute.isGlobalStartFloor && (
-                <circle
-                  cx={currentFloorRoute.startPoint[0]}
-                  cy={currentFloorRoute.startPoint[1]}
-                  r={doorRadius * 1.5}
-                  className="route-start-dot"
-                  strokeWidth={strokeWidth * 0.6}
-                />
-              )}
-              {currentFloorRoute.isGlobalEndFloor && (
-                <polygon
-                  points={getStarPoints(
-                    currentFloorRoute.endPoint[0],
-                    currentFloorRoute.endPoint[1],
-                    5,
-                    entranceSize * 0.9,
-                    entranceSize * 0.45
-                  )}
-                  className="route-end-star"
-                  strokeWidth={strokeWidth * 0.4}
-                />
-              )}
-            </g>
-          )}
-
-          {/* Layer 6: User Location Beacon */}
-          {userLocation && userLocation.floorId === selectedFloorId && (
-            <g id="user-location-marker">
-              <circle
-                cx={userLocation.position[0]}
-                cy={bounds.maxY + bounds.minY - userLocation.position[1]}
-                className="user-location-pulse"
-              />
-              <circle
-                cx={userLocation.position[0]}
-                cy={bounds.maxY + bounds.minY - userLocation.position[1]}
-                r={doorRadius * 1.5}
-                strokeWidth={strokeWidth * 0.8}
-                className="user-location-core"
-              />
-              <text
-                x={userLocation.position[0]}
-                y={bounds.maxY + bounds.minY - userLocation.position[1] - doorRadius * 2.0}
-                fontSize={doorRadius * 1.4}
-                className="user-location-label"
+                onClick={() => setEffectsEnabled((v) => !v)}
               >
-                📍 You ({userLocation.spaceName})
-              </text>
-            </g>
-          )}
-        </svg>
-
-        {/* Dynamic Hover Tooltip */}
-        {hoveredEntity && tooltipPos && (
-          <div
-            className="hover-tooltip"
-            style={{
-              left: `${tooltipPos.x}px`,
-              top: `${tooltipPos.y - 12}px`,
-            }}
-          >
-            {hoveredEntity.kind === 'space' && (
-              <>
-                <div className="tooltip-title">
-                  <span>{hoveredEntity.space.name || hoveredEntity.space.ref}</span>
-                  <span className="tooltip-badge">Ref: {hoveredEntity.space.ref}</span>
-                </div>
-                <div className="tooltip-meta-row">
-                  <span>Type: <strong className="tooltip-highlight">{hoveredEntity.space.type}</strong></span>
-                  {hoveredEntity.space.room_type && (
-                    <span>({hoveredEntity.space.room_type})</span>
-                  )}
-                  <span>•</span>
-                  <span>{hoveredEntity.area.toFixed(1)} m²</span>
-                </div>
-                <div style={{ marginTop: '5px', fontSize: '10px', color: closedElementIds.has(hoveredEntity.space.id) ? '#ef4444' : '#60a5fa', fontWeight: 600 }}>
-                  🖱 Click to {closedElementIds.has(hoveredEntity.space.id) ? 'reopen' : 'toggle closed (maintenance)'}
-                </div>
-              </>
-            )}
-
-            {hoveredEntity.kind === 'asset' && (
-              <>
-                <div className="tooltip-title">
-                  <span>{hoveredEntity.asset.name}</span>
-                  <span className="tooltip-badge">{hoveredEntity.asset.category || 'Asset'}</span>
-                </div>
-                <div className="tooltip-meta-row">
-                  <span>Type: <strong className="tooltip-highlight">{hoveredEntity.asset.type}</strong></span>
-                  {hoveredEntity.dimensions && <span>• {hoveredEntity.dimensions}</span>}
-                </div>
-              </>
-            )}
-
-            {hoveredEntity.kind === 'door' && (
-              <>
-                <div className="tooltip-title">
-                  <span>{hoveredEntity.opening.synthetic ? 'Added Door (New)' : 'Door'}</span>
-                  <span className="tooltip-badge">{hoveredEntity.opening.step_free ? 'Step-free' : 'Step'}</span>
-                </div>
-                <div className="tooltip-meta-row">
-                  <span>Width: <strong className="tooltip-highlight">{hoveredEntity.opening.width_m} m</strong></span>
-                  {hoveredEntity.connectedRefs.length > 0 && (
-                    <span>• Connects: {hoveredEntity.connectedRefs.join(' ↔ ')}</span>
-                  )}
-                </div>
-                <div style={{ marginTop: '5px', fontSize: '10px', color: closedElementIds.has(hoveredEntity.opening.id) ? '#ef4444' : '#60a5fa', fontWeight: 600 }}>
-                  🖱 Click to {closedElementIds.has(hoveredEntity.opening.id) ? 'reopen' : 'toggle closed (maintenance)'}
-                </div>
-              </>
-            )}
-
-            {hoveredEntity.kind === 'entrance' && (
-              <>
-                <div className="tooltip-title">
-                  <span style={{ color: '#ef4444' }}>▲ Building Entrance</span>
-                  <span className="tooltip-badge">{hoveredEntity.opening.step_free ? 'Step-free' : 'Standard'}</span>
-                </div>
-                <div className="tooltip-meta-row">
-                  <span>Width: <strong className="tooltip-highlight">{hoveredEntity.opening.width_m} m</strong></span>
-                  <span>• Main external access</span>
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* Floating Chat Panel (Step 6 & 7) */}
-        <div className={`chat-panel-container ${chatMinimized ? 'minimized' : ''}`}>
-          <div className="chat-header" onClick={() => chatMinimized && setChatMinimized(false)}>
-            <div className="chat-title-group">
-              <span className="chat-status-dot" />
-              <span>Building Assistant</span>
-            </div>
-
-            {!chatMinimized && (
-              <>
-                <button
-                  type="button"
-                  className={`speaker-toggle-btn ${ttsEnabled ? 'active' : ''}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setTtsEnabled(!ttsEnabled);
-                  }}
-                  title={ttsEnabled ? 'Voice output enabled - click to mute' : 'Voice output muted - click to enable'}
-                >
-                  {ttsEnabled ? '🔊 Audio ON' : '🔇 Audio OFF'}
-                </button>
-                <select
-                  aria-label="Pick Mock"
-                  className="mock-selector-select"
-                  onChange={(e) => {
-                    if (e.target.value) handleSelectMock(e.target.value);
-                  }}
-                  defaultValue=""
-                >
-                  <option value="" disabled>
-                    Pick Mock...
-                  </option>
-                  {MOCK_OPTIONS.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.label}
-                    </option>
-                  ))}
-                </select>
-              </>
-            )}
-
-            <div className="chat-controls-btns">
+                <Sparkles size={14} />
+                <span>Motion {animateEffects ? "on" : "off"}</span>
+              </button>
               <button
-                type="button"
-                className="chat-btn-icon"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setChatMinimized(!chatMinimized);
-                }}
-                title={chatMinimized ? 'Expand Chat' : 'Minimize Chat'}
+                className={`connection-pill ${canChat ? "connected" : ""}`}
+                onClick={() => void refresh()}
+                title="Refresh connection and building list"
               >
-                {chatMinimized ? '▲' : '−'}
+                <span className="status-dot" />
+                {canChat ? "Agent connected" : "Map explorer"}
+                <RotateCcw size={12} />
+              </button>
+              <button
+                className="avatar-button"
+                aria-label="Customize your map character"
+                onClick={() => setPanel("profile")}
+              >
+                <PixelPerson variant={avatar} />
               </button>
             </div>
-          </div>
-
-          {!chatMinimized && (
-            <>
-              {/* Message List */}
-              <div className="chat-messages-list">
-                {messages.map((msg) => (
-                  <div key={msg.id} className={`chat-message-bubble ${msg.sender}`}>
-                    {/* Understood chip */}
-                    {msg.response?.understood && (
-                      <span className="understood-chip">
-                        💡 Understood: {msg.response.understood}
-                      </span>
-                    )}
-
-                    {/* Clarification chip */}
-                    {msg.response?.needs_clarification && (
-                      <span className="clarify-chip">
-                        ⚠️ Needs clarification
-                      </span>
-                    )}
-
-                    <div>
-                      {msg.text}
-                      {msg.sender === 'agent' && (
-                        <button
-                          type="button"
-                          className="msg-speak-btn"
-                          onClick={() => speakText(msg.text)}
-                          title="Read aloud"
-                          aria-label="Read aloud"
-                        >
-                          🔊
+          </header>
+          <div className={`workspace ${sidebar ? "" : "sidebar-collapsed"}`}>
+            <aside
+              className="sidebar"
+              aria-label="Building, room and object directory"
+              inert={expandedMap}
+            >
+              <div className="sidebar-intro">
+                <span className="eyebrow">YOUR SURROUNDINGS</span>
+                <h1>
+                  Find your way<span>.</span>
+                </h1>
+                <p>
+                  Every space has a story.
+                  <br />
+                  Let’s make this one familiar.
+                </p>
+              </div>
+              <div className="building-picker-wrap">
+                <button
+                  className="building-picker"
+                  aria-expanded={buildingPicker}
+                  onClick={() => setBuildingPicker((v) => !v)}
+                >
+                  <span className="building-symbol">
+                    <Building2 size={21} strokeWidth={1.5} />
+                  </span>
+                  <span>
+                    <small>CURRENT BUILDING</small>
+                    <strong>
+                      {data?.building.name ?? "Choose a building"}
+                    </strong>
+                  </span>
+                  <ChevronDown size={15} />
+                </button>
+                <AnimatePresence>
+                  {buildingPicker && (
+                    <motion.div
+                      className="building-popover"
+                      initial={{ opacity: 0, y: -5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0 }}
+                    >
+                      <div className="search-field">
+                        <Search size={15} />
+                        <input
+                          aria-label="Search buildings"
+                          placeholder="Find a building…"
+                          value={buildingQuery}
+                          onChange={(e) => setBuildingQuery(e.target.value)}
+                          autoFocus
+                        />
+                      </div>
+                      <div className="building-options">
+                        {catalog
+                          .filter((b) =>
+                            `${b.name} ${b.id}`
+                              .toLowerCase()
+                              .includes(buildingQuery.toLowerCase()),
+                          )
+                          .map((b) => (
+                            <button
+                              key={b.id}
+                              onClick={() => switchBuilding(b.id)}
+                              className={b.id === buildingId ? "selected" : ""}
+                            >
+                              <Building2 size={16} />
+                              <span>
+                                {b.name}
+                                <small>
+                                  {b.source} · {b.id}
+                                </small>
+                              </span>
+                              {b.id === buildingId && <Check size={14} />}
+                            </button>
+                          ))}
+                      </div>
+                      <div className="popover-footer">
+                        {catalog.length} buildings available
+                        <button onClick={() => setBuildingPicker(false)}>
+                          Close
                         </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+              <div className="directory-heading">
+                <span className="eyebrow">THE DIRECTORY</span>
+                <span>{directoryCount}</span>
+              </div>
+              <div
+                className="directory-tabs"
+                role="group"
+                aria-label="Directory type"
+              >
+                <button
+                  aria-pressed={directoryMode === "rooms"}
+                  onClick={() => {
+                    setDirectoryMode("rooms");
+                    setDirectoryQuery("");
+                  }}
+                >
+                  {directoryMode === "rooms" && (
+                    <motion.span
+                      className="tab-indicator"
+                      layoutId="directory-tab"
+                      transition={{
+                        type: "spring",
+                        stiffness: 420,
+                        damping: 36,
+                      }}
+                    />
+                  )}
+                  <Map size={14} /> Rooms
+                </button>
+                <button
+                  aria-pressed={directoryMode === "objects"}
+                  onClick={() => {
+                    setDirectoryMode("objects");
+                    setDirectoryQuery("");
+                  }}
+                >
+                  {directoryMode === "objects" && (
+                    <motion.span
+                      className="tab-indicator"
+                      layoutId="directory-tab"
+                      transition={{
+                        type: "spring",
+                        stiffness: 420,
+                        damping: 36,
+                      }}
+                    />
+                  )}
+                  <Box size={14} /> Objects
+                </button>
+              </div>
+              <div className="search-field directory-search">
+                <Search size={16} />
+                <input
+                  aria-label={
+                    directoryMode === "rooms"
+                      ? "Search rooms across all floors"
+                      : "Search objects across all floors"
+                  }
+                  placeholder={
+                    directoryMode === "rooms"
+                      ? "A room, a place, a purpose…"
+                      : "A desk, a machine, a chair…"
+                  }
+                  value={directoryQuery}
+                  onChange={(e) => setDirectoryQuery(e.target.value)}
+                />
+                {directoryQuery && (
+                  <button
+                    aria-label="Clear directory search"
+                    onClick={() => setDirectoryQuery("")}
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+              {directoryMode === "objects" && (
+                <div className="object-directory-filter">
+                  <select
+                    aria-label="Object category"
+                    value={assetFilter}
+                    onChange={(e) => setAssetFilter(e.target.value)}
+                  >
+                    <option value="all">All object types</option>
+                    {assetCategories.map((c) => (
+                      <option key={c} value={c}>
+                        {c.charAt(0).toUpperCase() + c.slice(1)}
+                      </option>
+                    ))}
+                  </select>
+                  <span>{directoryQuery ? "All floors" : floor?.name}</span>
+                </div>
+              )}
+              <div className="directory-list">
+                {directoryMode === "objects" &&
+                  objectResults.slice(0, 100).map((asset) => (
+                    <button
+                      className={`directory-item object-item ${selection?.id === asset.id ? "selected" : ""}`}
+                      key={asset.id}
+                      onClick={() => selectAsset(asset)}
+                    >
+                      <span className="object-list-icon">
+                        <Box size={16} />
+                      </span>
+                      <span>
+                        <strong>{asset.name}</strong>
+                        <small>
+                          {asset.type?.replaceAll("_", " ") || "Unclassified"} ·{" "}
+                          {data?.spaces.find((s) => s.id === asset.space_id)
+                            ?.name || "Room unspecified"}
+                        </small>
+                      </span>
+                      <ChevronRight size={13} />
+                    </button>
+                  ))}
+                {directoryMode === "rooms" &&
+                  results.slice(0, 100).map((space) => (
+                    <button
+                      className={`directory-item ${selection?.id === space.id ? "selected" : ""}`}
+                      key={space.id}
+                      onClick={() => selectSpace(space)}
+                    >
+                      <span
+                        className="room-dot"
+                        style={{ backgroundColor: palette(space).ink }}
+                      />
+                      <span>
+                        <strong>{label(space)}</strong>
+                        <small>
+                          {category(space)}
+                          {directoryQuery
+                            ? ` · ${data?.floors.find((f) => f.id === space.floor_id)?.name}`
+                            : ""}
+                        </small>
+                      </span>
+                      {displayedClosures.has(space.id) ? (
+                        <span className="closed-tag">Closed</span>
+                      ) : (
+                        <ChevronRight size={13} />
+                      )}
+                    </button>
+                  ))}
+                {!directoryCount && (
+                  <p className="empty-note">
+                    No {directoryMode} match this search.
+                    <br />
+                    Try a name or type.
+                  </p>
+                )}
+                {directoryCount > 100 && (
+                  <p className="empty-note">
+                    Showing 100 of {directoryCount}. Search to narrow the list.
+                  </p>
+                )}
+              </div>
+              <div className="sidebar-bottom">
+                <button
+                  className="import-link"
+                  onClick={() => {
+                    setNotice("");
+                    setPanel("import");
+                  }}
+                >
+                  <span>
+                    <Upload size={18} />
+                  </span>
+                  <div>
+                    <strong>Somewhere new?</strong>
+                    <small>Bring your own building</small>
+                  </div>
+                  <ArrowUpRight size={17} />
+                </button>
+                <button
+                  className="source-link"
+                  onClick={() => setPanel("source")}
+                >
+                  <ShieldCheck size={13} />
+                  Original building data
+                  <ChevronRight size={12} />
+                </button>
+              </div>
+            </aside>
+            <main className="main-workspace">
+              <div className="workspace-heading" inert={expandedMap}>
+                <div>
+                  <div className="breadcrumb">
+                    <button
+                      onClick={() => setSidebar((v) => !v)}
+                      aria-label={sidebar ? "Hide directory" : "Show directory"}
+                    >
+                      {sidebar ? (
+                        <PanelLeftClose size={16} />
+                      ) : (
+                        <PanelLeftOpen size={16} />
+                      )}
+                    </button>
+                    <span>Explore</span>
+                    <ChevronRight size={11} />
+                    <span>{floor?.name ?? "Your building"}</span>
+                  </div>
+                  <h2>
+                    {data?.building.name ?? "Your next destination"}
+                    <span className="heading-spark">✧</span>
+                  </h2>
+                  <p className="workspace-subtitle">
+                    A new perspective. A familiar way forward.
+                  </p>
+                </div>
+                <div className="heading-details">
+                  {data && (
+                    <div className="building-facts">
+                      <span>
+                        <Layers3 size={13} />
+                        <strong>{floors.length}</strong>{" "}
+                        {floors.length === 1 ? "floor" : "floors"}
+                      </span>
+                      <span>
+                        <MapPin size={13} />
+                        <strong>{data.spaces.length}</strong> spaces
+                      </span>
+                    </div>
+                  )}
+                  <button
+                    className="subtle-button"
+                    onClick={() => setPanel("source")}
+                  >
+                    <Info size={16} />
+                    <span>About this place</span>
+                  </button>
+                </div>
+              </div>
+              <div className="explorer-grid">
+                <section
+                  id="building-explorer"
+                  className={`map-card ${expandedMap ? "expanded-map" : ""}`}
+                  aria-label="Building explorer"
+                >
+                  <div className="map-toolbar">
+                    <div className="view-switch" aria-label="Map view">
+                      {(["2d", "3d"] as const).map((mode) => (
+                        <button
+                          key={mode}
+                          className={view === mode ? "active" : ""}
+                          aria-pressed={view === mode}
+                          onClick={() => setView(mode)}
+                        >
+                          {view === mode && (
+                            <motion.span
+                              className="tab-indicator"
+                              layoutId="map-view-tab"
+                              transition={{
+                                type: "spring",
+                                stiffness: 420,
+                                damping: 36,
+                              }}
+                            />
+                          )}
+                          {mode === "2d" ? (
+                            <Map size={15} />
+                          ) : (
+                            <Layers3 size={15} />
+                          )}
+                          {mode === "2d" ? "2D map" : "3D building"}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="map-tools">
+                      {expandedMap && (
+                        <span className="expanded-building-name">
+                          {data?.building.name}
+                        </span>
+                      )}
+                      <span className="map-data-badge">
+                        <span />
+                        {liveData ? "Live building" : "Local map"}
+                      </span>
+                      <button
+                        className="icon-button"
+                        aria-label="Map layers"
+                        onClick={() => setPanel("layers")}
+                      >
+                        <Settings2 size={18} />
+                      </button>
+                      <button
+                        className="icon-button"
+                        aria-label={
+                          expandedMap ? "Exit expanded map" : "Expand map"
+                        }
+                        aria-expanded={expandedMap}
+                        aria-controls="building-explorer"
+                        onClick={() => setExpandedMap((v) => !v)}
+                      >
+                        {expandedMap ? (
+                          <Minimize2 size={18} />
+                        ) : (
+                          <Maximize2 size={18} />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="map-body">
+                    <div className="map-atmosphere" aria-hidden="true">
+                      <Suspense fallback={null}>
+                        <ShaderSurface kind="stage" enabled={animateEffects} />
+                      </Suspense>
+                    </div>
+                    {data && floor && (
+                      <Suspense
+                        fallback={
+                          <div className="map-loading">
+                            <LoaderCircle className="spin" />
+                            Preparing your 3D building…
+                          </div>
+                        }
+                      >
+                        {view === "2d" ? (
+                          <IndoorMap
+                            key={`${buildingId}:${floor.id}`}
+                            data={data}
+                            floor={floor}
+                            state={mapState}
+                            layers={layers}
+                            selected={selection}
+                            location={location}
+                            avatar={avatar}
+                            onSelect={setSelection}
+                          />
+                        ) : (
+                          <BuildingScene
+                            key={buildingId}
+                            data={data}
+                            floor={floor}
+                            state={mapState}
+                            layers={layers}
+                            selected={selection}
+                            location={location}
+                            avatar={avatar}
+                            onSelect={(next) => {
+                              setSelection(next);
+                              const item =
+                                next?.kind === "space"
+                                  ? data.spaces.find((s) => s.id === next.id)
+                                  : next?.kind === "asset"
+                                    ? data.assets?.find((a) => a.id === next.id)
+                                    : [
+                                        ...(data.openings ?? []),
+                                        ...mapState.doors,
+                                      ].find((d) => d.id === next?.id);
+                              if (item) setFloorId(item.floor_id);
+                            }}
+                          />
+                        )}
+                      </Suspense>
+                    )}
+                    <RoutePlayer avatar={avatar} />
+                    {loading && (
+                      <div className="map-loading">
+                        <LoaderCircle className="spin" />
+                        Getting to know the building…
+                      </div>
+                    )}
+                    {!loading && !data && (
+                      <div className="map-loading">
+                        <Building2 />
+                        No map loaded
+                        <button
+                          className="primary-button"
+                          onClick={() => void refresh()}
+                        >
+                          Try again
+                        </button>
+                      </div>
+                    )}
+                    <div className="floor-switch" aria-label="Choose a floor">
+                      {[...floors].reverse().map((f) => (
+                        <RouteExploreButton
+                          key={f.id}
+                          title={f.name}
+                          className={floorId === f.id ? "active" : ""}
+                          aria-label={f.name}
+                          aria-pressed={floorId === f.id}
+                          onClick={() => {
+                            setFloorId(f.id);
+                            setSelection(null);
+                          }}
+                        >
+                          {f.level === 0
+                            ? "G"
+                            : f.level < 0
+                              ? `B${Math.abs(f.level)}`
+                              : f.level}
+                          {route && routeOnFloor(route, f).length > 0 && (
+                            <span />
+                          )}
+                        </RouteExploreButton>
+                      ))}
+                    </div>
+                    <AnimatePresence>
+                      {selection && selectedName && (
+                        <motion.div
+                          className={`selection-card ${selectedAsset ? "object-selection" : ""}`}
+                          key={selection.id}
+                          initial={{ opacity: 0, y: 12 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: 8 }}
+                        >
+                          <div className="selection-title">
+                            <span className="eyebrow">
+                              {selectedSpace
+                                ? category(selectedSpace)
+                                : selectedAsset
+                                  ? selectedAsset.type?.replaceAll("_", " ") ||
+                                    "Equipment"
+                                  : selectedConnector
+                                    ? selectedConnector.kind === "lift"
+                                      ? "Lift connection"
+                                      : selectedConnector.kind === "stairs"
+                                        ? "Stair connection"
+                                        : "Floor connection"
+                                    : "Opening"}
+                            </span>
+                            <button
+                              aria-label="Close selection"
+                              onClick={() => setSelection(null)}
+                            >
+                              <X size={15} />
+                            </button>
+                          </div>
+                          <h3>{selectedName}</h3>
+                          <p>
+                            {selectedSpace
+                              ? `${polygonArea(selectedSpace.polygon).toLocaleString(undefined, { maximumFractionDigits: 1 })} m² · ${data?.floors.find((f) => f.id === selectedSpace.floor_id)?.name}`
+                              : selectedConnector
+                                ? selectedConnector.floor_ids
+                                    .map(
+                                      (id) =>
+                                        data?.floors.find((f) => f.id === id)
+                                          ?.name ?? id,
+                                    )
+                                    .join(" ↔ ")
+                                : selectedDoor
+                                  ? `${selectedDoor.width_m != null ? `${selectedDoor.width_m} m wide` : "Width not supplied"} · ${selectedDoor.step_free == null ? "Accessibility unknown" : selectedDoor.step_free ? "Step-free" : "Has a step"}`
+                                  : `${selectedAsset?.category || "Asset"} · ${data?.spaces.find((s) => s.id === selectedAsset?.space_id)?.name || ""}`}
+                          </p>
+                          {selectedConnector && (
+                            <div className="connector-details">
+                              <span className="connection-access">
+                                {selectedConnector.step_free === true
+                                  ? "Step-free connection"
+                                  : selectedConnector.step_free === false
+                                    ? "Not step-free"
+                                    : "Accessibility not supplied"}
+                                {selectedConnector.synthetic
+                                  ? " · Generated source link"
+                                  : ""}
+                              </span>
+                              <div className="connection-stops">
+                                {selectedConnector.space_ids
+                                  .map((id) =>
+                                    data?.spaces.find((s) => s.id === id),
+                                  )
+                                  .filter((s): s is Space => !!s)
+                                  .map((stop) => (
+                                    <button
+                                      key={stop.id}
+                                      onClick={() => selectSpace(stop)}
+                                    >
+                                      <Layers3 size={13} />
+                                      <span>
+                                        {
+                                          data?.floors.find(
+                                            (f) => f.id === stop.floor_id,
+                                          )?.name
+                                        }
+                                        <small>{label(stop)}</small>
+                                      </span>
+                                      <ArrowUpRight size={12} />
+                                    </button>
+                                  ))}
+                              </div>
+                              <p>
+                                {!selectedConnectorLayout
+                                  ? "Insufficient landing data to draw this connection."
+                                  : selectedConnectorLayout.spans.some(
+                                        (s) => !s.footprint,
+                                      )
+                                    ? "Offset or ambiguous landings use schematic links. No shaft position is invented."
+                                    : "Connected at source floor elevations. Stair flights, rails and shaft outlines are illustrative."}
+                              </p>
+                              <button
+                                className="text-button"
+                                disabled={!canChat || busy}
+                                onClick={() =>
+                                  void submitText(
+                                    `Tell me about ${selectedConnector.name} (connector id ${selectedConnector.id}), which floors it connects and its accessibility.`,
+                                    `Tell me about ${selectedConnector.name}.`,
+                                  )
+                                }
+                              >
+                                Ask about this connection{" "}
+                                <ArrowRight size={13} />
+                              </button>
+                            </div>
+                          )}
+                          {selectedSpace && (
+                            <div className="selection-actions">
+                              <button
+                                onClick={() => setHere(selectedSpace)}
+                                disabled={busy}
+                              >
+                                <MapPin size={14} />
+                                I’m here
+                              </button>
+                              <button
+                                className="primary-button"
+                                onClick={() => goTo(selectedSpace)}
+                                disabled={!canChat || busy}
+                              >
+                                <Navigation size={14} />
+                                Go here
+                              </button>
+                            </div>
+                          )}
+                          {(selectedSpace ||
+                            selectedDoor ||
+                            selectedConnector) && (
+                            <button
+                              className="closure-action"
+                              disabled={!canChat || busy}
+                              onClick={() =>
+                                void submitText(
+                                  `${closureId && mapState.closed.includes(closureId) ? "Reopen" : "Close"} ${closedConnector?.name || selectedName} (element id ${closureId}).`,
+                                  `${closureId && mapState.closed.includes(closureId) ? "Reopen" : "Close"} ${closedConnector?.name || selectedName}.`,
+                                )
+                              }
+                            >
+                              {selectedConnector
+                                ? mapState.closed.includes(selectedConnector.id)
+                                  ? "Reopen this connection"
+                                  : "Mark connection as closed"
+                                : closedConnector
+                                  ? `Reopen ${closedConnector.name || "this connector"}`
+                                  : mapState.closed.includes(selection.id)
+                                    ? "Reopen this space / opening"
+                                    : "Mark as temporarily closed"}
+                            </button>
+                          )}
+                          {selectedAsset && assetDescription && (
+                            <div className="object-details">
+                              <div className="object-source">
+                                <span
+                                  className={
+                                    selectedAsset.source === "dataset"
+                                      ? "annotated"
+                                      : "generated"
+                                  }
+                                />
+                                {assetDescription.provenance}
+                              </div>
+                              <dl>
+                                <div>
+                                  <dt>Footprint</dt>
+                                  <dd>
+                                    {assetDescription.footprintKnown
+                                      ? `${assetDescription.width} × ${assetDescription.depth} m`
+                                      : "Not supplied"}
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt>Height</dt>
+                                  <dd>
+                                    {assetDescription.heightKnown
+                                      ? `${assetDescription.height} m`
+                                      : "Estimated for display"}
+                                  </dd>
+                                </div>
+                              </dl>
+
+                              {assetDescription.family === "unknown" && (
+                                <p>
+                                  Unclassified shape shown as a bounding volume.
+                                </p>
+                              )}
+                              <details>
+                                <summary>About this model</summary>
+                                <p>
+                                  Position & identity from the source. Shape and
+                                  finishes are illustrative.
+                                </p>
+                                <p>
+                                  Orientation:{" "}
+                                  {assetDescription.footprintKnown
+                                    ? `${assetDescription.rotation}°`
+                                    : "not supplied"}
+                                  .
+                                </p>
+                                <code>{selectedAsset.id}</code>
+                              </details>
+                            </div>
+                          )}
+                          {selectedAsset && (
+                            <button
+                              className="text-button"
+                              disabled={!canChat || busy}
+                              onClick={() =>
+                                void submitText(
+                                  `Tell me about ${selectedAsset.name} (asset id ${selectedAsset.id}).`,
+                                  `Tell me about ${selectedAsset.name}.`,
+                                )
+                              }
+                            >
+                              Ask about this item
+                              <ArrowRight size={13} />
+                            </button>
+                          )}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                  <div className="map-footer">
+                    <div
+                      className="legend"
+                      title="Room categories; choose Room colours to colour the 3D model by use."
+                    >
+                      {[
+                        ...new globalThis.Map(
+                          (view === "3d" ? (data?.spaces ?? []) : spaces).map(
+                            (s) => {
+                              const p = palette(s);
+                              return [p.group, p] as const;
+                            },
+                          ),
+                        ).values(),
+                      ].map((p) => (
+                        <span key={p.group}>
+                          <i
+                            style={{
+                              background: view === "3d" ? p.solid : p.fill,
+                            }}
+                          />
+                          {p.group}
+                        </span>
+                      ))}
+                      {mapState.closed.length > 0 && (
+                        <span>
+                          <i style={{ background: "#b34252" }} />
+                          {mapState.closed.length} closed
+                        </span>
                       )}
                     </div>
-
-                    {/* Action badges */}
-                    {msg.response?.actions && msg.response.actions.length > 0 && (
-                      <div className="action-badges-row">
-                        {msg.response.actions.map((act, actIdx) => (
-                          <span
-                            key={actIdx}
-                            className={`action-badge ${
-                              act.type === 'door_added' ? 'door' : act.type
-                            }`}
-                          >
-                            {act.type === 'route' && `Route: ${act.length_m} m`}
-                            {act.type === 'highlight' && `Highlighted elements`}
-                            {act.type === 'closed' && `Closed: ${act.element_ids.length} element(s)`}
-                            {act.type === 'door_added' && `New Door: ${act.opening.width_m}m`}
+                    <span>
+                      {view === "3d"
+                        ? `${data?.spaces.length ?? 0} mapped spaces · ${floors.length} floors`
+                        : `${spaces.length} spaces · ${floor?.name}`}
+                    </span>
+                  </div>
+                </section>
+                <aside
+                  className="assistant-card"
+                  data-phase={phase}
+                  inert={expandedMap}
+                  aria-label="Your building assistant"
+                >
+                  <div className="assistant-header">
+                    <span>
+                      <Sparkles size={16} />
+                      YOUR BUILDING GUIDE
+                    </span>
+                    <button
+                      className="icon-button"
+                      aria-label={
+                        spokenAnswers
+                          ? "Mute spoken replies"
+                          : "Enable spoken replies"
+                      }
+                      aria-pressed={spokenAnswers}
+                      disabled={!voiceAvailable}
+                      onClick={() => {
+                        if (spokenAnswers) voice.stop();
+                        setSpokenAnswers((v) => !v);
+                      }}
+                    >
+                      {spokenAnswers ? (
+                        <Volume2 size={17} />
+                      ) : (
+                        <VolumeX size={17} />
+                      )}
+                    </button>
+                  </div>
+                  <div className="voice-stage">
+                    <div className="voice-art">
+                      <div className="voice-shader-halo">
+                        <Suspense fallback={null}>
+                          <ShaderSurface
+                            kind="halo"
+                            enabled={animateEffects && !expandedMap}
+                            active={voice.active || busy}
+                          />
+                        </Suspense>
+                      </div>
+                      <div className="voice-orbits" aria-hidden="true">
+                        <i />
+                        <i />
+                        <i />
+                      </div>
+                      <Suspense
+                        fallback={
+                          <div className="orb-shell">
+                            <div className="orb-render orb-fallback" />
+                          </div>
+                        }
+                      >
+                        <VoiceOrb
+                          phase={phase}
+                          input={voice.input}
+                          output={voice.output}
+                          animated={animateEffects && !expandedMap}
+                        />
+                      </Suspense>
+                    </div>
+                    <div
+                      className={`voice-state ${phase !== "idle" && phase !== "error" ? "engaged" : ""}`}
+                    >
+                      <i />
+                      {phase === "idle"
+                        ? "A little guidance, a conversation away"
+                        : phase === "error"
+                          ? "Connection needs attention"
+                          : "Your guide is with you"}
+                    </div>
+                    <h3 aria-live="polite">{phaseLabels[phase]}</h3>
+                    <p>
+                      {voice.active
+                        ? "Speak naturally. Pause to send your question."
+                        : "A familiar voice in an unfamiliar place."}
+                    </p>
+                    <button
+                      className={`voice-button ${voice.active ? "active" : ""}`}
+                      disabled={
+                        !canChat ||
+                        !voiceAvailable ||
+                        (!voice.active &&
+                          (busy || voice.phase === "connecting"))
+                      }
+                      onClick={() => {
+                        if (voice.active) voice.stop();
+                        else void voice.start();
+                      }}
+                    >
+                      {voice.active ? <MicOff size={15} /> : <Mic size={15} />}
+                      {voice.active ? "End conversation" : "Let’s talk"}
+                      {!voice.active && <ArrowUpRight size={14} />}
+                    </button>
+                    {phase === "speaking" && (
+                      <button
+                        className="interrupt-button"
+                        onClick={voice.interrupt}
+                      >
+                        {voice.active ? "Interrupt & speak" : "Stop playback"}
+                      </button>
+                    )}
+                    <span className="voice-caption">
+                      {voiceAvailable && canChat
+                        ? "YOUR AGENT · ELEVENLABS VOICE"
+                        : canChat
+                          ? "Voice service unavailable · text is ready"
+                          : "Connect the agent to start a conversation"}
+                    </span>
+                  </div>
+                  <div className="conversation-divider">
+                    <span />
+                    OR, A FEW WORDS
+                    <span />
+                  </div>
+                  <div
+                    className="conversation"
+                    role="log"
+                    aria-label="Conversation with your building agent"
+                    aria-live="polite"
+                  >
+                    {messages.map((message) => (
+                      <motion.div
+                        key={message.id}
+                        className={`message message-${message.sender}`}
+                        initial={{ opacity: 0, y: 5 }}
+                        animate={{ opacity: 1, y: 0 }}
+                      >
+                        <span className="message-author">
+                          {message.sender === "agent" ? (
+                            <>
+                              <span className="mini-spark">✧</span>Inside
+                            </>
+                          ) : (
+                            <>
+                              You
+                              <PixelPerson variant={avatar} />
+                            </>
+                          )}
+                          <time>{message.timestamp}</time>
+                        </span>
+                        <p>{message.text}</p>
+                        {message.response?.needs_clarification && (
+                          <span className="clarification-label">
+                            One detail will help me get this right
                           </span>
-                        ))}
+                        )}
+                      </motion.div>
+                    ))}
+                    {busy && (
+                      <div className="thinking-message">
+                        <span />
+                        <span />
+                        <span />
+                        <small>Checking your building</small>
                       </div>
                     )}
+                    <div ref={chatEnd} />
                   </div>
-                ))}
-                <div ref={messagesEndRef} />
-              </div>
-
-              {/* Quick Mock Chips */}
-              <div className="quick-mocks-bar">
-                {MOCK_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    className="quick-mock-chip"
-                    onClick={() => handleSelectMock(opt.id)}
+                  {messages.length < 2 && (
+                    <div className="suggestions">
+                      <button
+                        disabled={!canChat}
+                        onClick={() =>
+                          void submitText(
+                            "Give me a quick overview of this building.",
+                          )
+                        }
+                      >
+                        <Building2 size={13} />
+                        Show me around
+                        <ArrowUpRight size={12} />
+                      </button>
+                      <button
+                        disabled={!canChat}
+                        onClick={() =>
+                          void submitText(
+                            "Where are the lifts in this building?",
+                          )
+                        }
+                      >
+                        <Accessibility size={13} />
+                        Find a lift
+                        <ArrowUpRight size={12} />
+                      </button>
+                    </div>
+                  )}
+                  <form
+                    className="composer"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void submitText(draft);
+                    }}
                   >
-                    {opt.label.split(':')[0]}
+                    <textarea
+                      rows={1}
+                      aria-label="Message your building agent"
+                      placeholder={
+                        voice.active
+                          ? "End voice to type a message…"
+                          : clarification
+                            ? "Add that little detail…"
+                            : "Where would you like to go?"
+                      }
+                      value={draft}
+                      disabled={voice.active}
+                      onChange={(e) => setDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          if (draft.trim() && !busy) void submitText(draft);
+                        }
+                      }}
+                    />
+                    <button
+                      aria-label="Send message"
+                      disabled={
+                        !draft.trim() || busy || !canChat || voice.active
+                      }
+                    >
+                      {busy ? (
+                        <LoaderCircle size={17} className="spin" />
+                      ) : (
+                        <ArrowRight size={18} />
+                      )}
+                    </button>
+                  </form>
+                  <div className="assistant-footnote">
+                    Grounded in your building’s data.
+                  </div>
+                </aside>
+                <section className="journey-card" inert={expandedMap}>
+                  <div className="journey-person">
+                    <PixelPerson variant={avatar} />
+                    <span className="person-ring" />
+                  </div>
+                  <div className="journey-location">
+                    <span className="eyebrow">YOU ARE HERE</span>
+                    <strong>
+                      {currentLocation
+                        ? label(currentLocation)
+                        : "A good place to begin"}
+                    </strong>
+                    <span>
+                      {currentLocation
+                        ? `${data?.floors.find((f) => f.id === currentLocation.floor_id)?.name} · Location you selected`
+                        : "Select a room on the map, then “I’m here”."}
+                    </span>
+                  </div>
+                  <button
+                    className={`accessibility-toggle ${stepFree ? "active" : ""}`}
+                    aria-pressed={stepFree}
+                    disabled={busy || voice.active}
+                    onClick={() => {
+                      const next = !stepFree;
+                      setStepFree(next);
+                      if (canChat)
+                        void submitText(
+                          next
+                            ? "For my next routes, I need step-free access. Avoid stairs."
+                            : "For my next routes, stairs are allowed again.",
+                        );
+                    }}
+                  >
+                    <Accessibility size={18} />
+                    <span>Step-free</span>
+                    <i />
                   </button>
-                ))}
+                </section>
               </div>
-
-              {/* Chat Input Bar */}
-              <div className="chat-input-bar">
-                <input
-                  type="text"
-                  placeholder="Ask for route, room, or closures..."
-                  value={inputQuery}
-                  onChange={(e) => setInputQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleSendMessage();
-                  }}
-                  className="chat-input"
-                />
+              <AnimatePresence>
+                {route && (
+                  <motion.section
+                    className="route-card"
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                  >
+                    <div className="route-heading">
+                      <div>
+                        <span className="eyebrow">
+                          YOUR NEXT LITTLE JOURNEY
+                        </span>
+                        <h3>
+                          {route.length_m.toLocaleString(undefined, {
+                            maximumFractionDigits: 1,
+                          })}
+                          <span>metres to your destination.</span>
+                        </h3>
+                      </div>
+                      <div>
+                        <RouteReplayButton />
+                        <button
+                          className="icon-button"
+                          aria-label="Clear displayed route"
+                          onClick={() =>
+                            setMapState((s) => ({ ...s, route: null }))
+                          }
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                    </div>
+                    {understood && (
+                      <p className="route-understood">{understood}</p>
+                    )}
+                    {route.steps.some((step) =>
+                      /outside|outdoor/i.test(step),
+                    ) && (
+                      <p className="outdoor-note">
+                        <Info size={14} />
+                        This journey goes outside. The map shows the indoor
+                        geometry supplied by the agent; follow the full written
+                        directions for the outdoor leg.
+                      </p>
+                    )}
+                    <div className="route-floors">
+                      {floors
+                        .filter((f) => routeOnFloor(route, f).length > 0)
+                        .map((f) => (
+                          <RouteExploreButton
+                            key={f.id}
+                            className={floorId === f.id ? "active" : ""}
+                            onClick={() => setFloorId(f.id)}
+                          >
+                            <Layers3 size={12} />
+                            {f.name}
+                          </RouteExploreButton>
+                        ))}
+                    </div>
+                    <WrittenRoute>
+                      <ol className="route-steps">
+                        {route.steps.map((step, i) => (
+                          <li key={`${i}:${step}`}>
+                            <button
+                              className={activeStep === i ? "active" : ""}
+                              onClick={() => setActiveStep(i)}
+                            >
+                              <span>{String(i + 1).padStart(2, "0")}</span>
+                              <p>{step}</p>
+                              {activeStep === i && <Navigation size={14} />}
+                            </button>
+                          </li>
+                        ))}
+                      </ol>
+                    </WrittenRoute>
+                    <span className="route-note">
+                      Directions from the building agent · preview does not
+                      track your physical location
+                    </span>
+                  </motion.section>
+                )}
+              </AnimatePresence>
+              <footer className="workspace-footer" inert={expandedMap}>
+                <span>
+                  <Compass size={13} />A building becomes a place when you know
+                  your way.
+                </span>
+                <span>Made with care · Team Simran</span>
+              </footer>
+            </main>
+          </div>
+          <AnimatePresence>
+            {notice && !panel && (
+              <motion.div
+                className="notice"
+                role="status"
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 8 }}
+              >
+                <Info size={18} />
+                <p>{notice}</p>
                 <button
-                  type="button"
-                  className={`voice-mic-btn ${isListening ? 'listening' : ''}`}
-                  onClick={toggleListening}
-                  title={isListening ? 'Listening... click to stop' : 'Speak message (Microphone)'}
-                  aria-label="Microphone input"
+                  aria-label="Dismiss notice"
+                  onClick={() => setNotice("")}
                 >
-                  {isListening ? '🛑' : '🎤'}
+                  <X size={17} />
                 </button>
-                <button type="button" className="chat-send-btn" onClick={() => handleSendMessage()}>
-                  Send
-                </button>
-              </div>
-            </>
-          )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+          <ExplorerSheet
+            panel={panel}
+            close={() => setPanel(null)}
+            data={data}
+            layers={layers}
+            setLayers={setLayers}
+            avatar={avatar}
+            setAvatar={setAvatar}
+            upload={upload}
+            notify={setNotice}
+            notice={notice}
+          />
         </div>
-
-        {/* Color & Symbol Legend */}
-        <div className="legend-bar">
-          <div className="legend-item">
-            <span className="legend-swatch room" />
-            <span>Room</span>
-          </div>
-          <div className="legend-item">
-            <span className="legend-swatch corridor" />
-            <span>Corridor</span>
-          </div>
-          <div className="legend-item">
-            <span className="legend-swatch hall" />
-            <span>Hall</span>
-          </div>
-          <div className="legend-item">
-            <span className="legend-swatch stair" />
-            <span>Stair</span>
-          </div>
-          <div className="legend-item">
-            <span className="legend-swatch lift" />
-            <span>Lift</span>
-          </div>
-          <div className="legend-item">
-            <span className="legend-swatch outdoor" />
-            <span>Outdoor</span>
-          </div>
-          <div className="legend-item">
-            <span className="legend-swatch door" />
-            <span>Door</span>
-          </div>
-          <div className="legend-item">
-            <span className="legend-swatch entrance" />
-            <span>Entrance</span>
-          </div>
-          <div className="legend-item">
-            <span className="legend-swatch asset" />
-            <span>Asset</span>
-          </div>
-        </div>
-      </main>
-    </div>
+      </RoutePlaybackProvider>
+    </MotionConfig>
   );
 }
