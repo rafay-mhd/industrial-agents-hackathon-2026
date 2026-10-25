@@ -1,0 +1,267 @@
+.accessibility-pulse {
+  margin-top: 16px;
+  border: 1px solid #5c977139;
+  background: #f3f7ef70;
+  border-radius: 12px;
+  padding: 12px;
+}
+.pulse-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+}
+.pulse-toggle > span:nth-child(2) {
+  flex: 1;
+}
+.pulse-toggle strong {
+  display: block;
+  color: #315944;
+  font-size: 12px;
+}
+.pulse-toggle small {
+  display: block;
+  font-size: 10px;
+  color: #718371;
+  margin-top: 3px;
+}
+.pulse-toggle input {
+  accent-color: #317b58;
+  width: 16px;
+  height: 16px;
+}
+.pulse-icon {
+  display: grid;
+  place-items: center;
+  width: 29px;
+  height: 29px;
+  border-radius: 50%;
+  background: #dceadb;
+  color: #3d7754;
+}
+.pulse-body {
+  font-size: 11px;
+  color: #41634c;
+}
+.pulse-body > p {
+  margin: 12px 0 8px;
+  line-height: 1.5;
+}
+.pulse-body label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  gap: 8px;
+}
+.pulse-body select {
+  border: 1px solid #b4c2ad;
+  border-radius: 6px;
+  background: #fffaf0;
+  padding: 5px;
+  color: #365d48;
+  font-size: 10px;
+  max-width: 150px;
+}
+.pulse-score {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 13px 0;
+}
+.pulse-score strong {
+  font-size: 27px;
+  font-weight: 500;
+}
+.pulse-score span {
+  font-size: 11px;
+  max-width: 130px;
+}
+.pulse-change {
+  background: #dcead7;
+  border-radius: 6px;
+  padding: 7px;
+}
+.pulse-floor-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pulse-floor-list > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 5px;
+  font-size: 10px;
+}
+.pulse-floor-list i {
+  display: block;
+  flex-basis: 100%;
+  height: 4px;
+  border-radius: 3px;
+  background: linear-gradient(
+    to right,
+    #6baf86 var(--reachable),
+    #d6d8cf var(--reachable)
+  );
+  transition: background 0.4s;
+}
+.pulse-key {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 9px;
+  margin: 12px 0;
+}
+.pulse-key span:before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  background: #7fbc98;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+.pulse-key span + span:before {
+  background: #bdb9ac;
+}
+.pulse-body details {
+  font-size: 10px;
+  color: #7d806f;
+  line-height: 1.5;
+}
+.pulse-body summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.map-space.pulse-reachable {
+  animation: access-glow 3s ease-in-out infinite;
+  stroke: #70ab89;
+  stroke-width: 1.3px;
+}
+.map-space.pulse-unreachable {
+  opacity: 0.42;
+}
+.map-space {
+  transition:
+    fill 0.5s,
+    opacity 0.5s,
+    stroke 0.5s;
+}
+.equipment-report-note {
+  font-size: 10px;
+  line-height: 1.5;
+  color: #976b30;
+  display: flex;
+  gap: 7px;
+}
+.equipment-report-note svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.journey-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+  margin: 13px 0;
+  border-top: 1px solid #ddd5be;
+  padding-top: 12px;
+}
+.journey-metrics strong {
+  display: block;
+  font-size: 17px;
+  font-weight: 600;
+  color: #2d507d;
+  white-space: nowrap;
+}
+.journey-metrics small {
+  display: block;
+  font-size: 9px;
+  line-height: 1.4;
+  margin-top: 4px;
+  color: #89806c;
+}
+.navigation-player .navigation-avatar {
+  color: #294e89;
+  background: #e9eced;
+}
+.navigation-player .navigation-now strong {
+  font-size: 16px;
+}
+.navigation-player .navigation-controls {
+  flex-wrap: wrap;
+}
+.navigation-player {
+  max-height: calc(100% - 45px);
+  overflow-y: auto;
+}
+.navigation-player.is-first-person {
+  max-width: 360px;
+}
+@keyframes access-glow {
+  0%,
+  100% {
+    stroke-opacity: 0.45;
+  }
+  50% {
+    stroke-opacity: 1;
+  }
+}
+[data-motion="off"] .map-space.pulse-reachable {
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .map-space.pulse-reachable {
+    animation: none;
+  }
+  .map-space {
+    transition: none;
+  }
+}
+@media (max-width: 700px) {
+  .navigation-player {
+    max-width: calc(100% - 28px);
+    width: 320px;
+  }
+  .journey-metrics strong {
+    font-size: 15px;
+  }
+}
+
+/* Directions remain readable during both map and first-person playback. */
+.navigation-player {
+  width: 330px;
+}
+.navigation-player .navigation-avatar {
+  width: 48px;
+  height: 52px;
+  flex-shrink: 0;
+}
+.navigation-player .navigation-avatar svg {
+  width: 34px;
+  height: 34px;
+}
+.navigation-player .navigation-now strong {
+  font-size: 21px;
+  line-height: 1.25;
+  display: block;
+}
+.navigation-player .navigation-now p {
+  font-size: 11px;
+}
+.walkthrough-metrics {
+  grid-template-columns: 1fr 1fr;
+}
+.walkthrough-metrics strong {
+  font-size: 23px;
+}
+.walkthrough-view-controls {
+  margin-top: 7px;
+}
+@media (max-width: 700px) {
+  .navigation-player {
+    width: 310px;
+  }
+}

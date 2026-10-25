@@ -4,6 +4,59 @@ One entry per test run, newest first. Every entry names the commit it was run on
 numbers, and every miss with its cause. Add an entry whenever Core, Agent prompts or tools change, and after
 each dev run before a new submission CSV.
 
+## 2026-10-25 — resolve unavailable equipment and retain resolved history
+
+Working tree based on `main` at `5b3b8a5`, preserving the earlier uncommitted changes. Deterministic route-intent restoration and warning resolution changed; no model prompt, official scoring, Core, starter or source-data edits in this step.
+
+Commands: `MPLCONFIGDIR=/private/tmp/inside-mpl uv run --frozen --cache-dir /private/tmp/inside-uv-cache python -m unittest agent.tests.test_accessibility_equipment agent.tests.test_live_warnings`; the same Python prefix with `-m unittest discover -s agent/tests` and `-m core.oracle_check data/dev`; `npm --prefix ui run build`, `npm --prefix ui run lint`, `npm --prefix ui test`, `git diff --check`.
+
+- Root cause confirmed from Edge and server logs: an unavailable nearest-coffee query caused HTTP **422** before the resolve handler could change the report. Trip restoration performed availability lookup too early. Nearest intent now survives an unavailable result and is recalculated after the warning update. An already-resolved response now includes shared state and any stale route correction.
+- **119 backend tests**, **84 UI tests** (58 Node + 26 Vitest), build/lint and Core dev oracle **138/138** pass. Three backend regression tests failed on the old implementation and pass after the fix: all matching equipment unavailable, report/sync with blocked nearest intent, and repeated resolution by a stale viewer. Coverage includes fresh sessions, other viewers, preserved stops/step-free constraints, persistence, independent outages/closures and idempotency. UI regressions cover pending/duplicate clicks, retryable failures, resolved history and removal of resolved pins. An initial new UI assertion used the wrong helper name; corrected to `warningPins` and the complete UI suite passes. Existing lazy Three.js chunk-size warning remains.
+- Live native Edge on imported `pulse-equipment-house-20261025`: both coffee machines unavailable → nearest-coffee request shows an unavailable result → **Mark resolved** on the temporary studio outage succeeds → **16.9 m** route appears, warning count **3 → 2**, studio warning pin disappears, and **Resolved issues** shows the report as **Resolved just now**. An independent HTTP viewer also receives the recovered route with its step-free preference preserved. Repeating resolution returns state without another revision. The original corner-machine outage and wet-stairs caution stay active; only the temporary report was resolved. Runtime evidence is under ignored `agent_output/verification_20261025/resolve_issue/`. Updated backend is running on port 8012. No paid model/speech calls were needed.
+
+## 2026-10-25 — readable shared warnings and clear report validation
+
+Working tree based on `main` at `5b3b8a5`; earlier uncommitted features preserved. UI-only fix; no backend, model, Core, scorer or source-data changes in this step.
+
+Commands: `npm --prefix ui run build`, `npm --prefix ui run lint`, `npm --prefix ui test`, `git diff --check`. Local HTTP verification used `MPLCONFIGDIR=/private/tmp/inside-mpl uv run --frozen --cache-dir /private/tmp/inside-uv-cache python` with separate HTTP clients against the synthetic building's warnings, changes and sync endpoints. Verification IDs/results are under ignored `agent_output/verification_20261025/warning_panel/`.
+
+- Build, lint and **82 UI tests** pass (58 Node + 24 Vitest). Four new React tests cover reading while busy/offline, missing-location validation and the valid submission payload, incoming shared reports while preserving a draft, and retrying a failed report without losing its fields. Existing lazy Three.js chunk-size warning remains.
+- Root cause observed in Edge: **Post live warning** was disabled because the report's **Where exactly?** field was still unselected. Missing fields now produce visible guidance and native validation instead of a disabled submit button. Reading reports does not depend on posting or an active voice session. The sidebar reader opens from a persistent map-toolbar button, including in 3D; reports precede the form. Writes and feed requests have a 20-second timeout.
+- Native Edge in a separate synthetic-building tab: the toolbar opened the report reader with an independently posted **Another visitor** report. A second HTTP session posted a **Second visitor** report while that page was open; without refresh, the count changed **3 → 4** and its message/map pin appeared. An empty report form displayed an enabled **Post live warning** button and field guidance. Both temporary synthetic reports were resolved by API and verified inactive; the original two fixture reports were preserved. No user draft was submitted or assigned an invented location.
+
+## 2026-10-25 — restore animated walkthrough and clear on-screen directions
+
+Working tree based on `main` at `5b3b8a5`; all unrelated prior changes preserved. UI-only change requested by the user: remove the physical-walking/location flow and restore the video-style route demonstration.
+
+Commands: `npm --prefix ui run build`, `npm --prefix ui run lint`, `npm --prefix ui test`, `git diff --check`.
+
+- Build, lint and **78 UI tests** pass (58 Node + 20 Vitest). Removed the laptop diagnostic component and its three tests; added corner/arrival regression coverage and updated the provider/component test for the restored autoplay behavior. Existing lazy Three.js chunk-size warning remains.
+- First-person selection starts the animated route. Play/pause, replay, speed and progress stay visible; directions now remain specific in both 2D and 3D rather than being replaced by a generic playing status. Larger arrows, metre counts, “Turn now” and U-turn cues; incomplete geometry does not falsely claim arrival. Written directions open by default. No product motion/geolocation hooks mount or request permissions.
+- Native Edge on the existing synthetic fixture: Reception → Studio displays a left-turn arrow and 7 m instruction before playback. First person starts playback, advances the camera/footprints and decreases the remaining distance; arrival reaches 0 m. Replay starts again; Pause freezes at 7% with “In 5 m, turn left” and 16 m remaining. Screenshot reviewed for legibility. Phone calibration and laptop-location panels absent. No source dataset, backend, agent or official scorer changes in this step.
+
+## 2026-10-25 — laptop location capability diagnosis
+
+Working tree based on `main` at `5b3b8a5`, preserving the previous uncommitted features. UI-only addition; backend/Core/agent unchanged in this step.
+
+Commands: `npm --prefix ui run build`, `npm --prefix ui run lint`, `npm --prefix ui test`, `git diff --check`.
+
+- Build/lint and **80 UI tests** (57 Node + 23 Vitest) pass. Existing Three.js chunk warning remains. New tests cover explicit location permission trigger, coarse location jitter, reported precision vs actual positioning, permission denial, timeout, stop/unmount cleanup, and late callbacks.
+- Native Edge on the imported synthetic building: route and new laptop accuracy panel render correctly; phone sensor mode now says **Phone walking**. The actual location request could not be completed by automation because the user changed the browser during both click attempts; no measured device accuracy is claimed. User can invoke **Check laptop location** in that panel.
+- This is a capability diagnostic, not completed laptop walk tracking. No camera, background tracking, location upload, fake movement or absolute indoor-position claim. Original request for actual laptop movement still needs a usable positioning source.
+
+## 2026-10-25 — equipment-aware trips, accessibility pulse and live-walk startup
+
+Baseline: `main` at `5b3b8a5`, merged and pushed before these new working-tree changes. The earlier push includes the teammate's circulation models.
+
+Commands: `npm --prefix ui run build`, `npm --prefix ui run lint`, `npm --prefix ui test`; `MPLCONFIGDIR=/private/tmp/inside-mpl uv run --frozen --cache-dir /private/tmp/inside-uv-cache python -m unittest discover -s agent/tests`; the same Python prefix with `-m core.oracle_check data/dev`; `MPLCONFIGDIR=/private/tmp/inside-mpl uv run --frozen --cache-dir /private/tmp/inside-uv-cache --env-file .env python -m agent.benchmark data/dev/proc-factory-dev-003 data/dev/proc-factory-dev-003/questions.jsonl --no-kind-hints --model claude-sonnet-5-5 --out agent_output/verification_20261025/pulse_equipment/factory_final.csv`; `git diff --check`.
+
+- **116 backend tests**, **77 UI tests** (57 Node + 20 Vitest), build and lint pass. Core dev oracle **138/138**; final live Claude benchmark **5/5**. Existing lazy Three.js chunk-size warning remains. No source data, starter or scorer edits.
+- Regression coverage: equipment outages vs room closures; asset names/IDs and ordered stops; nearest-item rerouting and all-items-unavailable; explicit asset destinations; duplicate report resolution; cautions vs blocked passages; chat transaction publication; lift/width/door effects on pulse; stale and mismatched pulse responses; walking time vs floor-transfer allowance; first-person selection without autoplay; step/heading sensor updates and no progress from animation ticks during a live walk.
+- Imported a separate synthetic two-floor `pulse-equipment-house-20261025` with two coffee machines, one 3D printer, stairs, lift and a disconnected room. Real HTTP/SSE checks saw pulse **9 → 5 → 9** reachable spaces when the lift failed and reopened. SSE carried unavailable asset IDs. An unrelated coffee trip was preserved. Only synthetic imported data was edited.
+- Real Claude conversation found the nearest coffee machine, posted its outage and moved the saved nearest-item trip to the other machine without closing the room; accepted a wet-stairs caution; located the 3D printer. An all-machines-unavailable test exposed a generic error rewrite that incorrectly claimed the room route was missing. Fixed that distinction and reran the live check: the reply now says equipment is unavailable and the room stays open; a direct room route still succeeds. Evidence: `live_chat.json`, `live_final.json` (initial finding), `live_final_corrected.json`, and benchmark diagnostics in the ignored output directory above.
+- Native Edge browser: closest-coffee destination search (including “coffe” typo), step-free 3D-printer route, walking time/ETA, first-person calibration without autoplay, 2D reachability labels and 3D green floors. Submitted a printer-jam report through the actual free-text form: only that asset became unavailable, the affected trail cleared, and resolving it restored the route. An unrelated report left first-person on. Temporary printer/lift/general notices resolved; demo retains a coffee outage and wet-stairs caution.
+- Limits: browser motion tests use sensor events, not a physical walk. Phone tracking remains calibrated dead reckoning with drift/off-route stops and floor confirmation, requiring a supported secure phone browser and an on-site accuracy check. ETA is an estimate. Existing hypothetical-door Core/chat functionality is unchanged; no dedicated hypothetical visual editor was built. ElevenLabs was not called again because speech-credit testing was deferred. Single-process/unverified community-report limitations still apply.
+
 ## 2026-10-25 — Live Warn, targeted rerouting and cross-user notifications
 
 Baseline: `main` at `24a4144`, with prior uncommitted changes preserved; this run is on the working tree.

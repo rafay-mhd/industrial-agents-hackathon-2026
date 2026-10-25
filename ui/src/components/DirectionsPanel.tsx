@@ -13,6 +13,7 @@ export type TripSelection = {
   start: string;
   destination: string;
   via: string[];
+  asset_query?: string;
 };
 
 export function DirectionsPanel({
@@ -72,11 +73,17 @@ export function DirectionsPanel({
         <button
           className="swap-trip"
           aria-label="Swap start and destination"
-          disabled={busy}
+          disabled={
+            busy ||
+            !trip.start ||
+            !trip.destination ||
+            trip.destination.startsWith("nearest:")
+          }
           onClick={() =>
             onChange({
               start: trip.destination,
               destination: trip.start,
+              asset_query: undefined,
               via: [...trip.via].reverse(),
             })
           }
@@ -111,9 +118,18 @@ export function DirectionsPanel({
           data={data}
           disabled={busy}
           value={trip.destination}
+          allowNearest
           label="Destination"
-          placeholder="Where would you like to go?"
-          onChange={(destination) => onChange({ ...trip, destination })}
+          placeholder="Room, 3D printer, nearest coffee…"
+          onChange={(destination) =>
+            onChange({
+              ...trip,
+              destination,
+              asset_query: destination.startsWith("nearest:")
+                ? destination.slice(8)
+                : undefined,
+            })
+          }
         />
       </div>
       <div className="trip-shortcuts">
@@ -183,7 +199,8 @@ export function DirectionsPanel({
         </div>
       )}
       <p className="trip-hint">
-        Pick rooms on the map, or search by name and floor.
+        Search rooms or objects. “Nearest coffee machine” uses walking distance
+        from your start.
       </p>
     </section>
   );

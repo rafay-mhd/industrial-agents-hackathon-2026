@@ -119,3 +119,40 @@ test("Denied sensor permission never starts tracking and leaves route preview av
   expect(hook.status).toContain("denied");
   expect(store.getFrame().plan.complete).toBe(true);
 });
+
+test("First-person live position responds to sensed steps and heading, never elapsed animation time", async () => {
+  await act(async () => {
+    await hook.start(() => store.setFirstPerson(true));
+  });
+  await act(async () => {
+    sensor("deviceorientation", { alpha: 0 });
+    sensor("devicemotion", {
+      accelerationIncludingGravity: { x: 0, y: 0, z: 9.81 },
+    });
+  });
+  expect(store.getFrame().firstPerson).toBe(true);
+  const initial = store.getFrame().point;
+  const began = store.getFrame().live?.startedAt;
+  expect(began).toBeGreaterThan(0);
+  store.play(true);
+  store.tick(20);
+  expect(store.getFrame().distance).toBe(0);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(400);
+    sensor("devicemotion", {
+      accelerationIncludingGravity: { x: 0, y: 0, z: 12 },
+    });
+    sensor("devicemotion", {
+      accelerationIncludingGravity: { x: 0, y: 0, z: 9.81 },
+    });
+  });
+  expect(store.getFrame().live?.steps).toBe(1);
+  expect(store.getFrame().distance).toBeGreaterThan(0);
+  expect(store.getFrame().point).not.toEqual(initial);
+  const moved = store.getFrame().point;
+  await act(async () => sensor("deviceorientation", { alpha: 270 }));
+  expect(store.getFrame().point).toEqual(moved);
+  expect(store.getFrame().heading).toBeCloseTo(Math.PI);
+  store.tick(20);
+  expect(store.getFrame().point).toEqual(moved);
+});

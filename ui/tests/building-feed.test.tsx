@@ -3,7 +3,10 @@ import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, test, expect, vi } from "vitest";
 import { useBuildingFeed } from "../src/hooks/useBuildingFeed";
-import { RoutePlaybackProvider } from "../src/components/RoutePlayback";
+import {
+  RoutePlaybackProvider,
+  RoutePlayer,
+} from "../src/components/RoutePlayback";
 import { useRoutePlayback } from "../src/lib/routePlaybackContext";
 import type { BuildingData, RouteAction } from "../src/types";
 vi.mock("../src/lib/api", () => ({
@@ -243,4 +246,93 @@ test("Own mutation acknowledgment prevents a duplicate event response from repla
   expect(options.onActions).not.toHaveBeenCalled();
   await act(async () => Stream.all[0].send(1));
   expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+test("First-person selection starts the animated walkthrough; pause and replay still work", async () => {
+  const data = {
+    building: { id: "new", name: "New", source: "test" },
+    floors: [{ id: "g", level: 0, name: "Ground", elevation_m: 0 }],
+    spaces: [
+      {
+        id: "hall",
+        floor_id: "g",
+        name: "Hall",
+        type: "hall",
+        ref: "H",
+        polygon: [
+          [0, 0],
+          [20, 0],
+          [20, 4],
+          [0, 4],
+        ],
+      },
+    ],
+  } as BuildingData;
+  const route = {
+    type: "route",
+    geometry_valid: true,
+    length_m: 10,
+    steps: [],
+    floors: {
+      0: [
+        [1, 2],
+        [11, 2],
+      ],
+    },
+  } as RouteAction;
+  let controls!: ReturnType<typeof useRoutePlayback>;
+  function Probe() {
+    const value = useRoutePlayback();
+    useEffect(() => {
+      controls = value;
+    });
+    return null;
+  }
+  const noop = () => {};
+  await act(async () =>
+    root.render(
+      <RoutePlaybackProvider
+        data={data}
+        route={route}
+        location={null}
+        playing={false}
+        setPlaying={noop}
+        onFloorChange={noop}
+        onBegin={noop}
+        onClear={noop}
+        onWalkView={noop}
+      >
+        <Probe />
+        <RoutePlayer avatar={0} />
+      </RoutePlaybackProvider>,
+    ),
+  );
+  expect(host.textContent).toContain("Continue for 10 m");
+  expect(host.textContent).not.toMatch(
+    /Phone walking|Calibrate|Check laptop location/,
+  );
+  expect(
+    host.querySelector('[aria-label="Play route preview"]'),
+  ).not.toBeNull();
+  await act(async () => controls.walkView());
+  expect(
+    host.querySelector('[aria-label="Current direction"]')?.textContent,
+  ).toContain("Continue for");
+  expect(
+    host
+      .querySelector('[aria-label="Current direction"] svg')
+      ?.getAttribute("aria-label"),
+  ).toBe("straight");
+  expect(controls.store.getFrame().firstPerson).toBe(true);
+  expect(controls.store.getFrame().playing).toBe(true);
+  await act(async () => controls.store.tick(0.1));
+  const distance = controls.store.getFrame().distance;
+  expect(distance).toBeGreaterThan(0);
+  await act(async () => controls.toggle());
+  await act(async () => controls.store.tick(0.1));
+  expect(controls.store.getFrame().distance).toBe(distance);
+  await act(async () => controls.restart());
+  expect(controls.store.getFrame().distance).toBe(0);
+  expect(controls.store.getFrame().firstPerson).toBe(true);
+  expect(controls.store.getFrame().playing).toBe(true);
 });

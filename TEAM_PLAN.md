@@ -637,4 +637,9 @@ The map-first planner calls the existing Core through `/buildings/{id}/route`. C
 
 ### Live Warn integration — 2026-10-25
 
-Shared community reports now feed the existing Core route planner. The agent/backend owns persistence, closure layering, SSE revision notifications and trip-specific synchronization; the frontend owns the reporting feed, warning pins, affected-route banner and optional old/new trail comparison. No new routing algorithm or ElevenLabs agent is introduced. Existing agent, direct planner and phone walkthrough consume the same effective closures. API/action contracts and single-process prototype limits are documented in [agent/SERVER.md](agent/SERVER.md).
+Shared community reports now feed the existing Core route planner. The agent/backend owns persistence, closure layering, SSE revision notifications and trip-specific synchronization; the frontend owns the reporting feed, warning pins, affected-route banner and optional old/new trail comparison. No new routing algorithm or ElevenLabs agent is introduced. Existing agent, direct planner and animated walkthrough consume the same effective closures. API/action contracts and single-process prototype limits are documented in [agent/SERVER.md](agent/SERVER.md).
+
+
+### Equipment-aware reports and accessibility pulse — 2026-10-25
+
+The agent/backend now exposes Core reachability as `/accessibility` and preserves asset identities/nearest-item intent in shared trips. Object outages are separate from passage closures; free-text community reports and chat use the same persistent warning state. Frontend adds object search, the step-free pulse lens, animated first-person playback with prominent arrows, metre instructions and journey estimates. Core, starter and benchmark data are unchanged. At the user’s request, the product now uses animated route playback; live phone and laptop-position controls are removed from the interface. The hypothetical-door calculation already exists in Core/chat; its dedicated visual editor remains a separate future feature. See [API contract](agent/SERVER.md) and [verification log](docs/test_log.md).

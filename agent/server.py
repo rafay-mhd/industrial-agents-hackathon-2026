@@ -22,6 +22,7 @@ from agent.voice import install_voice
 from agent.imports import install_imports
 from agent.building_updates import BuildingUpdates, install_updates, route_action
 from agent.live_warnings import install_warnings
+from agent.accessibility import install_accessibility
 from core import Building
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -182,8 +183,8 @@ def create_app(data_root: Path | None = None, output_root: Path | None = None,
                                 raise RuntimeError('A generated building ID was registered by another session')
                             for created in pending:
                                 catalog.data[created.data['building']['id']] = deepcopy(created.data)
-                        edited=any(a['type'] in {'closed','door_added'} for a in session.actions)
-                        if (edited or synced) and not any(a['type']=='route' for a in session.actions):
+                        edited=any(a['type'] in {'closed','door_added','warning_changed'} for a in session.actions)
+                        if (edited or synced) and not any(a['type'] in {'route','route_unavailable'} for a in session.actions):
                             recalculated=route_action(agent)
                             if recalculated:
                                 session.actions.append(recalculated)
@@ -192,7 +193,7 @@ def create_app(data_root: Path | None = None, output_root: Path | None = None,
                         if state:session.actions.append(state)
                         elif synced:session.actions.insert(0,dict(type='building_state',building=catalog.get(building_id)))
                     return ChatResponse(reply=reply, understood=understood,
-                                        needs_clarification=clarification, actions=deepcopy(session.actions))
+                                        needs_clarification=clarification, actions=deepcopy([a for a in session.actions if a['type']!='warning_changed']))
                 except Exception:
                     data, closed, route, route_points, message_count, usage, response_count, context = snapshot
                     agent.map = Building(data)
@@ -220,6 +221,7 @@ def create_app(data_root: Path | None = None, output_root: Path | None = None,
     updates=BuildingUpdates(catalog,output_root/'changes')
     install_updates(app,updates,get_session)
     install_warnings(app,updates,get_session)
+    install_accessibility(app,updates)
     return app
 
 

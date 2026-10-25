@@ -169,3 +169,19 @@ test("Small sensor drift displays a point on the verified path; accumulated drif
   }
   assert.equal(result.live.offRoute, true);
 });
+
+test("Animated directions show a turn-now cue, then the next leg; incomplete paths do not claim arrival", () => {
+  const store = createPlaybackStore();
+  store.setPlan(plan);
+  store.seek(9.5 / plan.distance);
+  assert.equal(walkingCue(store.getFrame()).text, "Turn left now");
+  assert.equal(walkingCue(store.getFrame()).turn, "left");
+  store.seek(11 / plan.distance);
+  assert.match(walkingCue(store.getFrame()).text, /Continue for/);
+  store.seek(1);
+  assert.equal(walkingCue(store.getFrame()).text, "You’ve arrived");
+  store.setPlan({ ...plan, complete: false, notice: "A walkway is missing." });
+  store.seek(1);
+  assert.equal(walkingCue(store.getFrame()).text, "End of mapped route");
+  assert.equal(walkingCue(store.getFrame()).turn, "stop");
+});

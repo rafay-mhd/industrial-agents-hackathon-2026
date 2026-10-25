@@ -4,7 +4,11 @@ import { API, request } from "../lib/api";
 import type { ChatAction } from "../types";
 import type { TripSelection } from "../components/DirectionsPanel";
 export type PlannedTrip = TripSelection & { step_free: boolean };
-export type FeedEvent = { revision: number; closed: string[] };
+export type FeedEvent = {
+  revision: number;
+  closed: string[];
+  unavailable_assets?: string[];
+};
 type Options = {
   buildingId: string;
   enabled: boolean;
@@ -63,7 +67,10 @@ export function useBuildingFeed(options: Options) {
                 ? { session_id: session, ...current.trip.current }
                 : null,
             }),
-            signal: controller.signal,
+            signal: AbortSignal.any([
+              controller.signal,
+              AbortSignal.timeout(20000),
+            ]),
           },
         );
         if (!stopped && session === latest.current.session.current) {
@@ -126,7 +133,10 @@ export function useBuildingFeed(options: Options) {
       try {
         changed(
           await request<FeedEvent>(base + "/changes", {
-            signal: controller.signal,
+            signal: AbortSignal.any([
+              controller.signal,
+              AbortSignal.timeout(20000),
+            ]),
           }),
         );
       } catch {

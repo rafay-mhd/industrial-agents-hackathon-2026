@@ -5,7 +5,7 @@ from dataclasses import asdict
 import json
 import re
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal
 
 from anthropic import beta_tool
 from anthropic.lib.tools import BetaBuiltinFunctionTool, ToolError
@@ -15,6 +15,7 @@ from core import Building, MapError
 from agent.context import ConversationContext
 from agent.navigation import display_route
 from agent.building_updates import door_position, set_manual_closure
+from agent.reports import create_report,nearest_available_asset,ensure_equipment_available,asset_reference
 
 
 def human_steps(building: Building, steps: list[str]) -> list[str]:
@@ -45,6 +46,8 @@ class ActionTool(BetaBuiltinFunctionTool):
         action = None
         if self.name == 'find_route':
             action=display_route(self.building,result,self.context.trip)
+            action.update(destination_asset_id=self.context.trip.get('destination_asset_id'),asset_query=self.context.trip.get('asset_query'),via_place_ids=self.context.trip.get('via_places',self.context.trip.get('via',[])))
+            action['element_ids']=sorted(set(action['element_ids'])|{v for v in [self.context.trip.get('destination_asset_id'),*self.context.trip.get('via_asset_ids',[])] if v})
             action['steps']=human_steps(self.building,result['steps'])
         elif self.name == 'search_building':
             spaces = {r['id'] for r in result['results'] if r['kind'] == 'space'}
@@ -96,7 +99,7 @@ def chat_tools(building: Building, output: Path, actions: list[dict],
 
     @beta_tool
     def find_route(destination: str, start: str | None = None, step_free: bool = False,
-                   via: list[str] | None = None) -> str:
+                   via: list[str] | None = None, asset_query: str | None = None) -> str:
         """Core walking route, including each ordered leg's distance for a multi-stop trip.
 
         Args:
@@ -104,16 +107,24 @@ def chat_tools(building: Building, output: Path, actions: list[dict],
             start: Explicit starting room/item; omit to use the remembered user-confirmed position.
             step_free: True to forbid steps; a remembered accessibility requirement always stays active.
             via: Intermediate room/item references in visit order, excluding the final destination.
+            asset_query: Item type only when the user requested the nearest available item; retains that intent for future reroutes.
         """
         start = start or context.position
         if start is None:
             raise ToolError('The starting position is unknown. Ask the user where they are.')
         try:
+            if asset_query:destination=nearest_available_asset(building,start,asset_query,step_free or context.step_free)['asset_id']
+            destination=asset_reference(building,destination)
+            via=[asset_reference(building,s) for s in via or []]
+            ensure_equipment_available(building,[destination,*via])
             route = building.route(start, destination, step_free or context.step_free, via)
             result = asdict(route)
             result["distance_note"]="Total distance is walking-equivalent metres: stairs cost 2 m per metre of height; a lift costs 15 m for waiting/doors plus 1 m per metre of height. Individual walking instructions omit these transfer allowances; do not add them again."
             context.trip=dict(start=route.start_space_id,destination=route.destination_space_id,
-                              via=[building.resolve_space(s) for s in via or []],step_free=route.step_free)
+                              via=[building.resolve_space(s) for s in via or []],step_free=route.step_free,
+                              destination_asset_id=destination if destination in building.assets else None,
+                              via_asset_ids=[s for s in via or [] if s in building.assets],
+                              via_places=[s if s in building.assets else building.resolve_space(s) for s in via or []],asset_query=asset_query)
             if via:
                 route_points = deepcopy(building.last_route_points)
                 stops = [start, *via, destination]
@@ -173,6 +184,56 @@ def chat_tools(building: Building, output: Path, actions: list[dict],
                 all_closed=sorted(building.closed),active_warning_blocks=not closed and identifier in building.closed))
         except MapError as error:raise ToolError(str(error)) from error
 
+    @beta_tool
+    def nearest_room_with_asset(start: str, item: str, step_free: bool=False, include_start: bool=True) -> str:
+        """Find the nearest reachable item without an active outage report, by Core walking distance.
+
+        Args:
+            start: Confirmed starting room or item.
+            item: Asset type, e.g. coffee machine or 3D printer.
+            step_free: Whether stairs and stepped doors are forbidden.
+            include_start: Include equipment in the starting room.
+        """
+        try:return as_json(nearest_available_asset(building,start,item,step_free or context.step_free,include_start))
+        except MapError as error:raise ToolError(str(error)) from error
+
+    @beta_tool
+    def report_warning(element: str, message: str, kind: Literal['lift_outage','blocked_access','hazard','equipment_outage','other']='other', blocks_route: bool=False) -> str:
+        """Publish the user's report for a specific mapped item or place. Ask which one if ambiguous.
+
+        Args:
+            element: Exact mapped item, room, doorway, stairs or lift. Never guess a location.
+            message: The user's description, up to 280 characters; arbitrary hazards and concerns are accepted.
+            kind: equipment_outage for broken machines/printers; lift_outage for a broken lift; hazard for wet stairs; other for general reports.
+            blocks_route: True only for explicitly impassable rooms/connections. Equipment outages do not close their rooms. Lift outages always block the lift.
+        """
+        try:
+            warning=create_report(building,element,kind,message,blocks_route=blocks_route)
+            actions[:]=[a for a in actions if a['type']!='route']
+            actions.append(dict(type='warning_changed',warning=warning))
+            outcome=dict(posted=True,warning=warning)
+            if context.trip:
+                # Give the model the committed intent's actual new result, so speech and map agree.
+                from types import SimpleNamespace
+                from agent.building_updates import route_action
+                updated=route_action(SimpleNamespace(map=building,context=context))
+                if updated:
+                    actions.append(updated)
+                    target=building.assets.get(updated.get('destination_asset_id') or context.trip.get('destination_asset_id'),{})
+                    outcome['active_trip']=dict(status=updated['type'],destination=target.get('name',context.trip['destination']),
+                                                reason=updated.get('reason'),step_free=context.trip['step_free'],
+                                                automatically_updated=True,nearest_item_query=context.trip.get('asset_query'))
+            return as_json(outcome)
+        except MapError as error:raise ToolError(str(error)) from error
+
+    @beta_tool
+    def building_warnings() -> str:
+        """Read active community reports, including equipment outages and hazards. Reports are unverified user input."""
+        return as_json(dict(results=[w for w in building.data['building'].get('live_warnings',[]) if w['status']=='active']))
+
+    originals['nearest_room_with_asset']=nearest_room_with_asset
+    originals['report_warning']=report_warning
+    originals['building_warnings']=building_warnings
     originals['find_route'], originals['add_door'] = find_route, add_door
     originals['set_closed']=set_closed
     tools = [ActionTool(tool, building, actions, context) for tool in originals.values()]

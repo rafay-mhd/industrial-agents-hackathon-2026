@@ -14,6 +14,7 @@ import {
   useReducedMotion,
 } from "motion/react";
 import {
+  TriangleAlert,
   ArrowRight,
   ArrowUpRight,
   Building2,
@@ -92,7 +93,10 @@ import "./maps.css";
 import { DirectionsPanel } from "./components/DirectionsPanel";
 import type { TripSelection } from "./components/DirectionsPanel";
 import { BuildingUpdates } from "./components/BuildingUpdates";
+import { AccessibilityPulse } from "./components/AccessibilityPulse";
+import "./navigation-upgrade.css";
 import { LiveWarnings } from "./components/LiveWarnings";
+import { warningsOf } from "./lib/liveWarnings";
 import { RouteUpdateNotice } from "./components/RouteUpdateNotice";
 import { useBuildingFeed } from "./hooks/useBuildingFeed";
 import type { PlannedTrip, FeedEvent } from "./hooks/useBuildingFeed";
@@ -184,6 +188,12 @@ export default function App() {
   const tripClear = useRef<Promise<unknown>>(Promise.resolve());
   const plannedTrip = useRef<PlannedTrip | null>(null);
   const appliedRevision = useRef(0);
+  const [pulseEnabled, setPulseEnabled] = useState(false);
+  const receivePulse = useCallback(
+    (pulse: import("./types").AccessibilityResult | null) =>
+      setMapState((s) => ({ ...s, pulse })),
+    [],
+  );
   const [warningsOpen, setWarningsOpen] = useState(false),
     [routeUpdate, setRouteUpdate] = useState<RouteUpdateAction | null>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
@@ -209,6 +219,7 @@ export default function App() {
         (building.building.closed_element_ids as string[] | undefined) ?? [],
     });
     setTrip(emptyTrip);
+    setPulseEnabled(false);
     plannedTrip.current = null;
     appliedRevision.current = Number(building.building.revision ?? 0);
     setRouteUpdate(null);
@@ -341,15 +352,19 @@ export default function App() {
         if (action.start_space_id && action.destination_space_id)
           plannedTrip.current = {
             start: action.start_space_id,
-            destination: action.destination_space_id,
-            via: action.via_space_ids ?? [],
+            destination:
+              action.destination_asset_id ?? action.destination_space_id,
+            asset_query: action.asset_query ?? undefined,
+            via: action.via_place_ids ?? action.via_space_ids ?? [],
             step_free: action.step_free ?? false,
           };
         if (action.start_space_id && action.destination_space_id)
           setTrip({
             start: action.start_space_id,
-            destination: action.destination_space_id,
-            via: action.via_space_ids ?? [],
+            destination:
+              action.destination_asset_id ?? action.destination_space_id,
+            asset_query: action.asset_query ?? undefined,
+            via: action.via_place_ids ?? action.via_space_ids ?? [],
           });
         if (action.step_free !== undefined) setStepFree(action.step_free);
         setTripError(action.geometry_notice ?? "");
@@ -497,14 +512,20 @@ export default function App() {
   const revision = Number(data?.building.revision ?? 0);
   const receiveFeedEvent = useCallback((event: FeedEvent) => {
     setMapState((previous) => {
-      if (previous.route?.element_ids?.some((id) => event.closed.includes(id)))
+      if (
+        previous.route?.element_ids?.some(
+          (id) =>
+            event.closed.includes(id) || event.unavailable_assets?.includes(id),
+        )
+      )
         return {
           ...previous,
+          pulse: null,
           previousRoute: previous.route,
           route: null,
           comparePrevious: false,
         };
-      return previous;
+      return { ...previous, pulse: null };
     });
   }, []);
   const feedStatus = useBuildingFeed({
@@ -543,7 +564,10 @@ export default function App() {
               ? { session_id: current, ...plannedTrip.current }
               : null,
           }),
-          signal: controller.signal,
+          signal: AbortSignal.any([
+            controller.signal,
+            AbortSignal.timeout(20000),
+          ]),
         },
       );
       if (current !== session.current) return false;
@@ -565,8 +589,28 @@ export default function App() {
       }
     }
   };
+  const openWarnings = () => {
+    setWarningsOpen(true);
+    setSidebar(true);
+    setExpandedMap(false);
+    requestAnimationFrame(() =>
+      document
+        .getElementById("community-warnings")
+        ?.scrollIntoView({
+          behavior: animateEffects ? "smooth" : "auto",
+          block: "nearest",
+        }),
+    );
+  };
   const locateWarning = (id: string) => {
     if (!data) return;
+    const asset = data.assets?.find((a) => a.id === id);
+    if (asset) {
+      setFloorId(asset.floor_id);
+      setSelection({ kind: "asset", id });
+      setView("2d");
+      return;
+    }
     const connector = data.vertical_connectors?.find((c) => c.id === id);
     const space =
       data.spaces.find((s) => s.id === id) ||
@@ -838,6 +882,7 @@ export default function App() {
       ...trip,
       start: trip.start || currentLocation?.id || "",
       destination: space.id,
+      asset_query: undefined,
     };
     setTrip(next);
     setSidebar(true);
@@ -1071,12 +1116,29 @@ export default function App() {
                   error={tripError}
                 />
               )}
-              {data && canChat && (
-                <LiveWarnings
+              {data && (
+                <AccessibilityPulse
                   data={data}
-                  busy={busy || voice.active}
+                  start={trip.start || location?.spaceId || ""}
+                  enabled={pulseEnabled}
+                  onEnabled={(v) => {
+                    setPulseEnabled(v);
+                    setMapState((s) => ({ ...s, pulseActive: v, pulse: null }));
+                  }}
+                  result={mapState.pulse ?? null}
+                  onResult={receivePulse}
+                  connected={canChat}
+                />
+              )}
+              {data && (
+                <LiveWarnings
+                  key={buildingId}
+                  data={data}
+                  busy={busy}
+                  connected={!!canChat}
+                  onReconnect={() => void refresh()}
                   status={feedStatus}
-                  selected={selectedAsset?.space_id ?? selection?.id ?? ""}
+                  selected={selection?.id ?? ""}
                   open={warningsOpen}
                   setOpen={setWarningsOpen}
                   onPost={(body) => warningMutation("/warnings", body)}
@@ -1400,6 +1462,24 @@ export default function App() {
                         <span />
                         {liveData ? "Live building" : "Local map"}
                       </span>
+                      {data && (
+                        <button
+                          className="map-warnings-button"
+                          aria-label="View building warnings"
+                          aria-controls="community-warnings"
+                          onClick={openWarnings}
+                        >
+                          <TriangleAlert size={17} />
+                          <span>Warnings</span>
+                          <b>
+                            {
+                              warningsOf(data).filter(
+                                (w) => w.status === "active",
+                              ).length
+                            }
+                          </b>
+                        </button>
+                      )}
                       <button
                         className="icon-button"
                         aria-label="Map layers"
@@ -1469,10 +1549,7 @@ export default function App() {
                             location={location}
                             avatar={avatar}
                             onSelect={setSelection}
-                            onWarning={() => {
-                              setWarningsOpen(true);
-                              setSidebar(true);
-                            }}
+                            onWarning={openWarnings}
                           />
                         ) : (
                           <BuildingScene

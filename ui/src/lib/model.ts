@@ -24,6 +24,8 @@ export type Layers = {
   route: boolean;
 };
 export type MapState = {
+  pulse?: import("../types").AccessibilityResult | null;
+  pulseActive?: boolean;
   route: RouteAction | null;
   previousRoute?: RouteAction | null;
   comparePrevious?: boolean;

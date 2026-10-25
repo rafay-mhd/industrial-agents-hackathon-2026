@@ -13,6 +13,7 @@ export type TravelLeg = {
   distance: number;
   start: number;
   connectorId?: string;
+  connectorKind?: string;
   illustrative?: boolean;
 };
 export type RoutePlan = {
@@ -278,6 +279,7 @@ export function buildRoutePlan(
       toFloorId: next.floor.id,
       name: `${c.name || c.kind} → ${next.floor.name}`,
       connectorId: c.id,
+      connectorKind: c.kind,
       illustrative: true,
       points,
     });

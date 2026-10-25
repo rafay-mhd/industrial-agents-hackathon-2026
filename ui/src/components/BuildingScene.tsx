@@ -99,15 +99,17 @@ export default function BuildingScene(props: MapProps) {
       ? navFrame.leg?.kind === "connector"
         ? "connected"
         : "inside"
-      : exteriorSelection
-        ? "building"
-        : selected?.kind === "connector"
-          ? mode === "floors"
-            ? "floors"
-            : "connected"
-          : selected || floor.id !== modeFloorId
-            ? "inside"
-            : mode;
+      : state.pulseActive || state.pulse
+        ? "inside"
+        : exteriorSelection
+          ? "building"
+          : selected?.kind === "connector"
+            ? mode === "floors"
+              ? "floors"
+              : "connected"
+            : selected || floor.id !== modeFloorId
+              ? "inside"
+              : mode;
   useEffect(() => {
     selectRef.current = onSelect;
   }, [onSelect]);

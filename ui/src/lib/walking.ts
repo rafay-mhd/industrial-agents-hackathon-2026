@@ -2,6 +2,7 @@ import type { RoutePlan, RoutePoint, PlaybackFrame } from "./routePlayback";
 import { sampleRoute } from "./routePlayback.ts";
 
 export type LivePosition = {
+  startedAt?: number;
   point: RoutePoint;
   estimatedPoint?: RoutePoint;
   floorId: string;
@@ -168,9 +169,16 @@ export function walkingCue(frame: PlaybackFrame) {
   }
   if (frame.finished)
     return {
-      text: frame.live ? "Near your destination" : "You’ve arrived",
-      detail: frame.plan.endLabel,
-      turn: "arrive",
+      text: !frame.plan.complete
+        ? "End of mapped route"
+        : frame.live
+          ? "Near your destination"
+          : "You’ve arrived",
+      detail: frame.plan.complete
+        ? frame.plan.endLabel
+        : frame.plan.notice ||
+          "The remaining route has no verified map geometry.",
+      turn: frame.plan.complete ? "arrive" : "stop",
     };
   const leg = frame.leg;
   if (!leg)
@@ -195,7 +203,7 @@ export function walkingCue(frame: PlaybackFrame) {
       outgoing = Math.atan2(c[0] - b[0], -(c[2] - b[2]));
     const turn = angleDifference(outgoing, incoming),
       remaining = offset - frame.distance;
-    if (remaining > 0.3 && Math.abs(turn) > 0.5) {
+    if (remaining >= -0.15 && Math.abs(turn) > 0.5) {
       const name =
         Math.abs(turn) > 2.5
           ? "turn around"
@@ -203,9 +211,12 @@ export function walkingCue(frame: PlaybackFrame) {
             ? "turn right"
             : "turn left";
       return {
-        text: `In ${Math.max(1, Math.round(remaining))} m, ${name}`,
+        text:
+          remaining <= 0.75
+            ? `${name[0].toUpperCase()}${name.slice(1)} now`
+            : `In ${Math.max(1, Math.round(remaining))} m, ${name}`,
         detail: frame.plan.floorNames[frame.floorId],
-        turn: turn > 0 ? "right" : "left",
+        turn: Math.abs(turn) > 2.5 ? "around" : turn > 0 ? "right" : "left",
       };
     }
   }

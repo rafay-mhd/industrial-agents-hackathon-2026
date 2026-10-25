@@ -757,23 +757,37 @@ export function createBuildingWorld(
           connection.layout.stops.some((s) => closed.has(s.space.id)),
         next.selected?.id === connection.layout.connector.id,
       );
+    const pulse = next.state.pulse
+      ? new Set(next.state.pulse.reachable_space_ids)
+      : null;
     for (const [id, r] of rooms) {
       const color = closed.has(id)
         ? new THREE.Color("#a82c47")
-        : highlighted.has(id)
-          ? new THREE.Color("#ddb74e")
-          : next.finish === "materials" && next.mode !== "building"
-            ? r.finishColor
-            : r.color;
+        : pulse
+          ? new THREE.Color(pulse.has(id) ? "#66b692" : "#bdb8ae")
+          : highlighted.has(id)
+            ? new THREE.Color("#ddb74e")
+            : next.finish === "materials" && next.mode !== "building"
+              ? r.finishColor
+              : r.color;
       r.material.color.copy(color).lerp(new THREE.Color("#fff9ed"), 0.2);
       r.roofMaterial.color.copy(
-        next.finish === "materials" && !closed.has(id) && !highlighted.has(id)
+        next.finish === "materials" &&
+          !pulse &&
+          !closed.has(id) &&
+          !highlighted.has(id)
           ? r.color
           : color,
       );
       const selected = next.selected?.id === id;
-      r.material.emissive.set(selected ? "#244a9d" : "#000000");
-      r.material.emissiveIntensity = selected ? 0.28 : 0;
+      r.material.emissive.set(
+        selected ? "#244a9d" : pulse?.has(id) ? "#3c8869" : "#000000",
+      );
+      r.material.emissiveIntensity = selected
+        ? 0.28
+        : pulse?.has(id)
+          ? 0.14
+          : 0;
       r.roofMaterial.emissive.copy(r.material.emissive);
       r.roofMaterial.emissiveIntensity = r.material.emissiveIntensity;
     }

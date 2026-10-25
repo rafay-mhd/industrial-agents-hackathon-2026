@@ -99,9 +99,12 @@ export function parseFootprint(fp: unknown): AssetFootprint | null {
 // Route & Chat Types (Section 4.3 Contract)
 export interface RouteAction {
   type: "route";
+  destination_asset_id?: string | null;
+  asset_query?: string | null;
   start_space_id?: string;
   destination_space_id?: string;
   via_space_ids?: string[];
+  via_place_ids?: string[];
   step_free?: boolean;
   geometry_valid?: boolean;
   element_ids?: string[];
@@ -162,10 +165,13 @@ export interface LiveWarning {
   id: string;
   element_id: string;
   label: string;
-  kind: "lift_outage" | "blocked_access" | "hazard" | "other";
+  kind:
+    "lift_outage" | "blocked_access" | "hazard" | "equipment_outage" | "other";
   message: string;
   reporter: string;
   blocks_route: boolean;
+  asset_unavailable?: boolean;
+  space_id?: string | null;
   status: "active" | "resolved";
   created_at: string;
   updated_at: string;
@@ -203,4 +209,20 @@ export interface ChatMessage {
   text: string;
   timestamp: string;
   response?: ChatResponse;
+}
+
+export interface AccessibilityResult {
+  revision: number;
+  start_space_id: string;
+  step_free: boolean;
+  min_width_m: number | null;
+  reachable_space_ids: string[];
+  unreachable_space_ids: string[];
+  floors: {
+    floor_id: string;
+    name: string;
+    reachable: number;
+    total: number;
+  }[];
+  notice: string;
 }

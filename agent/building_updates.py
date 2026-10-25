@@ -14,6 +14,7 @@ from shapely.geometry import Polygon
 from shapely.ops import nearest_points
 from core import Building, MapError
 from agent.navigation import display_route
+from agent.reports import nearest_available_asset,ensure_equipment_available,asset_reference
 
 
 def warning_blocks(meta):
@@ -49,16 +50,22 @@ def route_action(agent):
     trip=agent.context.trip
     if not trip:return None
     try:
+        if trip.get('asset_query'):
+            target=nearest_available_asset(agent.map,trip['start'],trip['asset_query'],trip['step_free'])
+            trip.update(destination=target['space_id'],destination_asset_id=target['asset_id'])
+        ensure_equipment_available(agent.map,[trip.get('destination_asset_id'),*trip.get('via_asset_ids',[])])
         route=agent.map.route(trip['start'],trip['destination'],trip['step_free'],trip.get('via'))
         from agent.chat_tools import human_steps
         result=asdict(route);action=display_route(agent.map,result,trip)
+        action.update(destination_asset_id=trip.get('destination_asset_id'),asset_query=trip.get('asset_query'),via_place_ids=trip.get('via_places',trip.get('via',[])))
+        action['element_ids']=sorted(set(action['element_ids'])|{v for v in [trip.get('destination_asset_id'),*trip.get('via_asset_ids',[])] if v})
         action['steps']=human_steps(agent.map,result['steps'])
         return action
     except MapError as error:
         agent.map.last_route=None
         agent.map.last_route_points=[]
         reason=str(error)
-        if reason.startswith(('No route','No step-free route')):
+        if not trip.get('asset_query') and reason.startswith(('No route','No step-free route')):
             unavailable=[]
             for identifier in sorted(agent.map.closed):
                 item=agent.map.connectors.get(identifier) or agent.map.spaces.get(identifier) or agent.map.openings.get(identifier) or {}
@@ -94,7 +101,7 @@ class BuildingUpdates:
         with self.catalog.lock:
             if identifier not in self.catalog.data:raise HTTPException(404,'Building not found.')
             meta=self.catalog.data[identifier]['building']
-            return deepcopy(dict(revision=meta.get('revision',0),closed=meta.get('closed_element_ids',[]),changes=meta.get('changes',[]),warnings=meta.get('live_warnings',[])))
+            return deepcopy(dict(revision=meta.get('revision',0),closed=meta.get('closed_element_ids',[]),changes=meta.get('changes',[]),warnings=meta.get('live_warnings',[]),unavailable_assets=sorted({w['element_id'] for w in meta.get('live_warnings',[]) if w['status']=='active' and w.get('asset_unavailable')})))
     def publish(self,agent,actions):
         edits=[a for a in actions if a['type'] in {'closed','door_added','warning_changed'}]
         if not edits:return None
@@ -134,6 +141,18 @@ class TripRequest(BaseModel):
     destination:str=Field(min_length=1,max_length=300)
     via:list[str]=Field(default_factory=list,max_length=12)
     step_free:bool=False
+    asset_query:str|None=Field(default=None,min_length=1,max_length=200)
+
+
+def trip_context(building,request):
+    # Keep nearest-item intent even when no item is currently available. Availability
+    # is evaluated by route_action, including after a warning has been resolved.
+    target=asset_reference(building,request.destination) if not request.asset_query else None
+    via=[asset_reference(building,s) for s in request.via]
+    return dict(start=building.resolve_space(request.start),destination=building.resolve_space(target) if target is not None else None,
+                via=[building.resolve_space(s) for s in via],via_places=[s if s in building.assets else building.resolve_space(s) for s in via],step_free=request.step_free,
+                destination_asset_id=target if target in building.assets else None,
+                via_asset_ids=[s for s in via if s in building.assets],asset_query=request.asset_query)
 
 
 class EditRequest(BaseModel):
@@ -164,8 +183,7 @@ def install_updates(app,updates,get_session):
         with session.lock,updates.lock(identifier):
             updates.sync(session);agent=session.agent
             try:
-                agent.context.trip=dict(start=agent.map.resolve_space(request.start),destination=agent.map.resolve_space(request.destination),
-                    via=[agent.map.resolve_space(s) for s in request.via],step_free=request.step_free)
+                agent.context.trip=trip_context(agent.map,request)
                 agent.context.step_free=request.step_free
                 action=route_action(agent)
                 return dict(actions=[dict(type='building_state',building=updates.catalog.get(identifier)),action],

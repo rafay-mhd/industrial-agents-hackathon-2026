@@ -416,6 +416,7 @@ export default function IndoorMap({
       points.map(([x, y], i) => `${i ? "L" : "M"}${x},${-y}`).join(" "),
     )
     .join(" ");
+  const reached = state.pulse ? new Set(state.pulse.reachable_space_ids) : null;
   const pins = warningPins(data, floor.id);
   const previousPath =
     state.comparePrevious && state.previousRoute
@@ -520,19 +521,29 @@ export default function IndoorMap({
                   ? "url(#closed-hatch)"
                   : selected?.id === space.id
                     ? "#c2d0e8"
-                    : highlighted.has(space.id)
-                      ? "#d6bd83"
-                      : palette(space).fill
+                    : reached
+                      ? reached.has(space.id)
+                        ? "#b7dcc7"
+                        : "#e8e3d9"
+                      : highlighted.has(space.id)
+                        ? "#d6bd83"
+                        : palette(space).fill
               }
               stroke={selected?.id === space.id ? "#29478e" : "#fffcf4"}
               strokeWidth={selected?.id === space.id ? 2.5 : 2}
               vectorEffect="non-scaling-stroke"
-              className={`map-space ${highlighted.has(space.id) ? "map-highlight" : ""}`}
+              className={`map-space ${reached ? (reached.has(space.id) ? "pulse-reachable" : "pulse-unreachable") : ""} ${highlighted.has(space.id) ? "map-highlight" : ""}`}
               onClick={() => choose({ kind: "space", id: space.id })}
             >
               <title>
                 {label(space)} · {space.type}
-                {closed.has(space.id) ? " · Closed" : ""}
+                {closed.has(space.id)
+                  ? " · Closed"
+                  : reached
+                    ? reached.has(space.id)
+                      ? " · Reachable step-free"
+                      : " · Not connected under access filters"
+                    : ""}
               </title>
             </polygon>
           ))}
@@ -702,7 +713,9 @@ export default function IndoorMap({
           </g>
         )}
         {pins.map((pin) => {
-          const blocked = pin.warnings.some((w) => w.blocks_route);
+          const blocked = pin.warnings.some(
+            (w) => w.blocks_route || w.asset_unavailable,
+          );
           return (
             <g
               key={pin.id}

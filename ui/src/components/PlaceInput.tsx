@@ -1,15 +1,16 @@
 import { useId, useState } from "react";
 import { MapPin, X } from "lucide-react";
 import type { BuildingData } from "../types";
-import { label as roomLabel } from "../lib/model";
+import { placeChoices, nearestChoices } from "../lib/placeSearch";
 
 export function PlaceInput({
   data,
   value,
   onChange,
   label,
-  placeholder = "Search rooms or room numbers",
+  placeholder = "Search places, objects or room numbers",
   disabled = false,
+  allowNearest = false,
 }: {
   data: BuildingData;
   value: string;
@@ -17,22 +18,30 @@ export function PlaceInput({
   label: string;
   placeholder?: string;
   disabled?: boolean;
+  allowNearest?: boolean;
 }) {
   const id = useId(),
     [query, setQuery] = useState<string | null>(null),
     [open, setOpen] = useState(false),
     [active, setActive] = useState(0);
-  const selected = data.spaces.find((s) => s.id === value),
-    q = (query ?? (selected ? roomLabel(selected) : "")).trim().toLowerCase();
-  const matches = data.spaces
-    .filter(
-      (s) =>
-        !q ||
-        `${roomLabel(s)} ${s.ref ?? ""} ${data.floors.find((f) => f.id === s.floor_id)?.name ?? ""}`
-          .toLowerCase()
-          .includes(q),
-    )
-    .slice(0, 35);
+  const choices = placeChoices(data),
+    selected =
+      choices.find((s) => s.id === value) ||
+      (value.startsWith("nearest:")
+        ? {
+            id: value,
+            name: "Nearest " + value.slice(8).replaceAll("_", " "),
+            detail: "Find by walking distance",
+          }
+        : undefined);
+  const q = (query ?? selected?.name ?? "").trim().toLowerCase(),
+    words = q.replace(/^(nearest|closest)\s+/, "").split(/\s+/);
+  const matches = [
+    ...(allowNearest ? nearestChoices(data, q) : []),
+    ...choices.filter(
+      (s) => !q || words.every((w) => s.search.toLowerCase().includes(w)),
+    ),
+  ].slice(0, 35);
   const choose = (room: string) => {
     onChange(room);
     setQuery(null);
@@ -61,7 +70,7 @@ export function PlaceInput({
           autoComplete="off"
           placeholder={placeholder}
           disabled={disabled}
-          value={query ?? (selected ? roomLabel(selected) : "")}
+          value={query ?? (selected ? selected.name : "")}
           onFocus={() => {
             setOpen(true);
             setActive(
@@ -105,11 +114,7 @@ export function PlaceInput({
           </button>
         )}
       </div>
-      {selected && !open && (
-        <small>
-          {data.floors.find((f) => f.id === selected.floor_id)?.name}
-        </small>
-      )}
+      {selected && !open && <small>{selected.detail}</small>}
       {open && (
         <div
           className="place-results"
@@ -127,14 +132,16 @@ export function PlaceInput({
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => choose(s.id)}
             >
-              <span>{roomLabel(s)}</span>
-              <small>
-                {data.floors.find((f) => f.id === s.floor_id)?.name}
-                {s.ref ? ` · ${s.ref}` : ""}
-              </small>
+              <span>{s.name}</span>
+              <small>{s.detail}</small>
             </button>
           ))}
-          {!matches.length && <p>No matching rooms in this building.</p>}
+          {!matches.length && (
+            <p>
+              No mapped places or objects match. Try Ask Inside for a
+              natural-language request.
+            </p>
+          )}
         </div>
       )}
     </div>

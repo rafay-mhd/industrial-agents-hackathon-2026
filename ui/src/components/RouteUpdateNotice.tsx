@@ -35,8 +35,8 @@ export function RouteUpdateNotice({
             <p>{update.message}</p>
             {update.changed && (
               <small>
-                Live walking pauses for route changes. Confirm your current room
-                before restarting.
+                Playback pauses when the route changes. Press Play to see the
+                updated directions.
               </small>
             )}
             {canCompare && update.changed && (

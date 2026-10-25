@@ -16,6 +16,10 @@ export function warningPlaces(data: BuildingData) {
       id: s.id,
       label: `${s.name} · ${floors.get(s.floor_id) ?? ""}`,
     })),
+    ...(data.assets ?? []).map((a) => ({
+      id: a.id,
+      label: `${a.name} · ${names.get(a.space_id) ?? ""} · ${floors.get(a.floor_id) ?? ""}`,
+    })),
     ...(data.openings ?? []).map((d) => ({
       id: d.id,
       label:
@@ -41,13 +45,17 @@ export function warningPins(data: BuildingData, floorId: string) {
     const door = data.openings?.find(
       (d) => d.id === w.element_id && d.floor_id === floorId,
     );
-    if (!room && !door) continue;
+    const asset = data.assets?.find(
+      (a) => a.id === w.element_id && a.floor_id === floorId,
+    );
+    if (!room && !door && !asset) continue;
     const existing = groups.get(w.element_id);
     if (existing) existing.warnings.push(w);
     else
       groups.set(w.element_id, {
         id: w.element_id,
-        point: door?.position ?? interiorPoint(room!.polygon),
+        point:
+          asset?.position ?? door?.position ?? interiorPoint(room!.polygon),
         warnings: [w],
       });
   }

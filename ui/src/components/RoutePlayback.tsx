@@ -10,6 +10,11 @@ import {
   Navigation,
   Check,
   ChevronDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  TriangleAlert,
+  Undo2,
 } from "lucide-react";
 import type { BuildingData, RouteAction } from "../types";
 import type { Location } from "../lib/model";
@@ -20,9 +25,8 @@ import {
   useRouteFrame,
 } from "../lib/routePlaybackContext";
 import type { Controls } from "../lib/routePlaybackContext";
-import { PixelPerson } from "./PixelPerson";
 import { walkingCue } from "../lib/walking";
-import { useWalking } from "../hooks/useWalking";
+import { journeyEstimate, durationLabel } from "../lib/journey";
 
 export function RoutePlaybackProvider({
   data,
@@ -124,17 +128,16 @@ export function RoutePlaybackProvider({
         if (!store.getFrame().plan.verified || !store.getFrame().plan.complete)
           return;
         const frame = store.getFrame();
-        if (!frame.firstPerson) {
+        const entering = !frame.firstPerson;
+        if (entering) {
           if (frame.finished) store.restart();
-          store.setFollow(true);
-          if (!frame.live) {
-            store.play(true);
-            callbacks.current.setPlaying(true);
-          }
+          else store.play(true);
+          callbacks.current.setPlaying(true);
+          callbacks.current.onBegin();
+          callbacks.current.onWalkView();
         }
-        store.setFirstPerson(!frame.firstPerson);
-        callbacks.current.onBegin();
-        callbacks.current.onWalkView();
+        store.setFirstPerson(entering);
+        store.setFollow(true);
       },
       toggle() {
         const f = store.getFrame();
@@ -171,23 +174,27 @@ export function RoutePlaybackProvider({
   );
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
-export function RoutePlayer({ avatar }: { avatar: number }) {
+export function RoutePlayer(_props: { avatar: number }) {
   const controls = useRoutePlayback(),
     frame = useRouteFrame();
-  const walking = useWalking(controls.store),
-    cue = walkingCue(frame);
-  const [calibrated, setCalibrated] = useState<typeof frame.plan | null>(null);
+  const cue = walkingCue(frame);
   if (!frame.active) return null;
-  const { plan, leg } = frame,
-    status = frame.finished
-      ? plan.complete
-        ? "Preview complete"
-        : "End of mapped segment"
-      : frame.playing
-        ? leg?.kind === "connector"
-          ? "Changing floors"
-          : "Walking the route"
-        : "Preview paused";
+  const { plan } = frame;
+  const estimate = journeyEstimate(plan, frame.distance);
+  const Turn =
+    cue.turn === "stop"
+      ? TriangleAlert
+      : cue.turn === "left"
+        ? ArrowLeft
+        : cue.turn === "right"
+          ? ArrowRight
+          : cue.turn === "around"
+            ? Undo2
+            : cue.turn === "floor"
+              ? ArrowUpDown
+              : cue.turn === "arrive"
+                ? Check
+                : ArrowUp;
   return (
     <section
       className={`navigation-player ${frame.firstPerson && frame.follow ? "is-first-person" : ""}`}
@@ -196,55 +203,52 @@ export function RoutePlayer({ avatar }: { avatar: number }) {
     >
       <div className="navigation-player-heading">
         <span>
-          <i className={frame.playing || frame.live ? "playing" : ""} />{" "}
-          {frame.live ? "LIVE WALK · ESTIMATED" : "ROUTE PREVIEW"}
+          <i className={frame.playing ? "playing" : ""} />
+          ROUTE WALKTHROUGH ·{" "}
+          {frame.finished ? "COMPLETE" : frame.playing ? "PLAYING" : "PAUSED"}
         </span>
         <button aria-label="Clear route preview" onClick={controls.clear}>
           <X size={14} />
         </button>
       </div>
-      <div className="navigation-now">
+      <div className="navigation-now" aria-label="Current direction">
         <div className="navigation-avatar">
-          <PixelPerson variant={avatar} title="Route preview character" />
+          <Turn
+            size={36}
+            aria-label={cue.turn === "around" ? "Turn around" : cue.turn}
+          />
         </div>
         <div>
-          <strong>{frame.firstPerson || frame.live ? cue.text : status}</strong>
-          <p>
-            {frame.firstPerson || frame.live
-              ? cue.detail
-              : frame.finished
-                ? plan.endLabel
-                : leg?.kind === "connector"
-                  ? leg.name
-                  : plan.floorNames[frame.floorId]}
-          </p>
+          <strong>{cue.text}</strong>
+          <p>{cue.detail}</p>
         </div>
-        {frame.finished ? (
-          <Check size={19} />
-        ) : leg?.kind === "connector" ? (
-          <ArrowUpDown size={19} />
-        ) : (
-          <Navigation size={17} />
-        )}
+      </div>
+      <div
+        className="journey-metrics walkthrough-metrics"
+        aria-label="Journey estimate"
+      >
+        <div>
+          <strong>{estimate.metres} m</strong>
+          <small>
+            walking remaining
+            {estimate.transfers
+              ? ` + ${estimate.transfers} floor transfer${estimate.transfers > 1 ? "s" : ""}`
+              : ""}
+          </small>
+        </div>
+        <div>
+          <strong>
+            {estimate.seconds
+              ? `~${durationLabel(estimate.seconds)}`
+              : "Complete"}
+          </strong>
+          <small>estimated walking time</small>
+        </div>
       </div>
       <div className="navigation-controls">
         <button
-          aria-pressed={frame.firstPerson}
-          onClick={controls.walkView}
-          disabled={!plan.verified || !plan.complete}
-          title={
-            !plan.verified
-              ? "A verified walkable route is required for first person"
-              : "Follow the route through mapped doorways"
-          }
-          className={frame.firstPerson ? "following" : ""}
-        >
-          <Navigation size={14} />
-          {frame.firstPerson ? "Walk view on" : "First person"}
-        </button>
-        <button
           className="navigation-play"
-          disabled={!plan.distance || !!frame.live}
+          disabled={!plan.distance}
           onClick={controls.toggle}
           aria-label={
             frame.finished
@@ -254,28 +258,20 @@ export function RoutePlayer({ avatar }: { avatar: number }) {
                 : "Play route preview"
           }
         >
-          {frame.playing ? <Pause size={14} /> : <Play size={14} />}{" "}
-          {frame.finished ? "Replay" : frame.playing ? "Pause" : "Play"}
+          {frame.playing ? <Pause size={16} /> : <Play size={16} />}
+          {frame.finished ? "Replay" : frame.playing ? "Pause" : "Play route"}
         </button>
         <button
           title="Restart route preview"
           aria-label="Restart route preview"
           onClick={controls.restart}
-          disabled={!!frame.live}
+          disabled={!plan.distance}
         >
-          <RotateCcw size={14} />
-        </button>
-        <button
-          className={frame.follow ? "following" : ""}
-          aria-pressed={frame.follow}
-          onClick={frame.follow ? controls.explore : controls.follow}
-        >
-          <LocateFixed size={14} /> {frame.follow ? "Following" : "Follow"}
+          <RotateCcw size={15} />
         </button>
         <select
           aria-label="Route preview speed"
           value={frame.speed}
-          disabled={!!frame.live}
           onChange={(e) => controls.store.setSpeed(Number(e.target.value))}
         >
           <option value="1">1×</option>
@@ -283,10 +279,33 @@ export function RoutePlayer({ avatar }: { avatar: number }) {
           <option value="4">4×</option>
         </select>
       </div>
+      <div className="navigation-controls walkthrough-view-controls">
+        <button
+          aria-pressed={frame.firstPerson}
+          onClick={controls.walkView}
+          disabled={!plan.verified || !plan.complete}
+          title={
+            !plan.verified
+              ? "A verified walkable route is required for first person"
+              : "Play the route from eye level"
+          }
+          className={frame.firstPerson ? "following" : ""}
+        >
+          <Navigation size={15} />
+          {frame.firstPerson ? "First person on" : "First person"}
+        </button>
+        <button
+          className={frame.follow ? "following" : ""}
+          aria-pressed={frame.follow}
+          onClick={frame.follow ? controls.explore : controls.follow}
+        >
+          <LocateFixed size={14} />
+          {frame.follow ? "Following" : "Follow"}
+        </button>
+      </div>
       <input
         className="navigation-scrubber"
         type="range"
-        disabled={!!frame.live}
         min="0"
         max="1000"
         value={Math.round(frame.progress * 1000)}
@@ -300,91 +319,8 @@ export function RoutePlayer({ avatar }: { avatar: number }) {
         <span>{plan.endLabel}</span>
       </div>
       {plan.notice && <p className="navigation-notice">{plan.notice}</p>}
-      <details className="live-walk-settings">
-        <summary>
-          <LocateFixed size={14} /> Live walk with your phone
-        </summary>
-        {frame.live ? (
-          <>
-            <p>
-              {frame.live.steps} steps · motion estimate · recalibrate often
-            </p>
-            {frame.live.needsFloorConfirmation && (
-              <button
-                className="navigation-play"
-                onClick={walking.confirmFloor}
-              >
-                I’ve reached{" "}
-                {
-                  frame.plan.floorNames[
-                    (frame.leg?.kind === "connector"
-                      ? frame.leg
-                      : frame.plan.legs[frame.legIndex + 1]
-                    )?.toFloorId
-                  ]
-                }
-              </button>
-            )}
-            <button onClick={walking.stop}>Stop live tracking</button>
-          </>
-        ) : (
-          <>
-            <p>
-              Stand at <strong>{plan.startLabel}</strong>, facing the first
-              footprints. Keep your phone pointing ahead while walking.
-            </p>
-            <label>
-              <input
-                type="checkbox"
-                checked={calibrated === plan}
-                onChange={(e) => setCalibrated(e.target.checked ? plan : null)}
-              />{" "}
-              I’m at the start, phone pointing along the route
-            </label>
-            <label>
-              Step length{" "}
-              <select
-                aria-label="Walking step length"
-                value={walking.stride}
-                onChange={(e) => walking.setStride(Number(e.target.value))}
-              >
-                <option value="0.6">Short · 60 cm</option>
-                <option value="0.72">Average · 72 cm</option>
-                <option value="0.85">Long · 85 cm</option>
-              </select>
-            </label>
-            <button
-              className="navigation-play"
-              disabled={
-                calibrated !== plan ||
-                walking.starting ||
-                !plan.complete ||
-                !plan.verified
-              }
-              onClick={() => {
-                setCalibrated(null);
-                controls.store.play(false);
-                void walking.start();
-              }}
-            >
-              {walking.starting
-                ? "Connecting sensors…"
-                : "Calibrate & start walking"}
-            </button>
-          </>
-        )}
-        {walking.status && <p role="status">{walking.status}</p>}
-        <small>
-          Uses phone motion, not indoor GPS. Position is an estimate; confirm
-          floors and recalibrate at known places. Requires a supported phone and
-          HTTPS.
-        </small>
-      </details>
       <span className="navigation-disclaimer">
-        {frame.live
-          ? "Sensor-driven estimate · keep checking your surroundings"
-          : "Preview playback · switch on Live walk to use phone sensors"}
-        {leg?.kind === "connector" ? " · illustrative transfer" : ""}
+        Animated route preview · follows mapped doors, stairs and lifts.
       </span>
     </section>
   );
@@ -409,7 +345,7 @@ export function RouteReplayButton() {
 }
 export function WrittenRoute({ children }: { children: ReactNode }) {
   return (
-    <details className="written-route">
+    <details className="written-route" open>
       <summary>
         <ChevronDown size={15} /> Written directions
       </summary>
