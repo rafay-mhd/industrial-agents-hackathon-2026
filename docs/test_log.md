@@ -4,6 +4,14 @@ One entry per test run, newest first. Every entry names the commit it was run on
 numbers, and every miss with its cause. Add an entry whenever Core, Agent prompts or tools change, and after
 each dev run before a new submission CSV.
 
+## 2026-10-25 — merge current main and publish guide improvements
+
+Verified merged commit `571a696`, combining UI work `c0e940c` with remote main `1e0f84c`. The merge preserves the teammate's single character, 2D walker/wheelchair sprites and submission artifacts alongside the voice/route presentation changes; no conflicts required manual resolution.
+
+Commands: `npm --prefix ui run build`, `npm --prefix ui run lint`, `npm --prefix ui test`, `git diff --check`, `uv run --frozen --cache-dir /private/tmp/inside-uv-cache python -m core.oracle_check data/dev`, and the `BENCHMARK.md` factory command with `--out agent_output/benchmark/merge_20261025_factory.csv` followed by `python -m agent.report` on its JSONL diagnostics.
+
+Results: build/lint/whitespace checks pass, **88 UI tests** pass (59 Node + 29 Vitest), Core dev **138/138**, and live factory **5/5**, all on their first attempt with no execution errors. Existing large JavaScript chunk warning only. Credentials and generated benchmark diagnostics remain ignored.
+
 ## 2026-10-25 — aligned voice guide and glass walkthrough directions
 
 Working tree based on `428543a` (`main`). Frontend presentation and playback guidance only.
