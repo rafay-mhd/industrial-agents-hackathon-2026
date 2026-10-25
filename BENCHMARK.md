@@ -65,7 +65,7 @@ uv run --frozen --env-file .env python -m agent.benchmark data/test data/test/qu
   --no-kind-hints --model claude-sonnet-5-5 --out agent_output/benchmark/test_candidate.csv
 ```
 
-The existing v1 submission is `submissions/team_simran_v1.csv`. Generate new candidates under
+The current v2 submission is `submissions/team_simran_v2.csv`; v1 is preserved. Generate new candidates under
 `agent_output/` first; `--out` replaces an existing CSV and its JSONL sidecar. Validate the candidate
 before saving a new version in `submissions/`. Send only the CSV to the organizers, not the diagnostics.
 
@@ -75,7 +75,8 @@ valid CSV quoting, UTF-8, and at most 5 MB. Our single-line replies give 146 phy
 the header; the official format also permits properly quoted multiline replies. Format validation
 does not establish hidden-test accuracy. See README.md section 6 for the official scoring rules.
 
-Verified on 2026-10-24: full dev **138/138**, with all nine kinds correct; v1 contains **145 answers**.
+Verified again in step 12 on 2026-10-24: full dev **138/138**, with all nine kinds correct;
+v2 contains **145 fresh answers** and passes the submission format checks.
 Test accuracy is unknown. See `agent/PROGRESS.md` for model comparison, validation and provenance.
 
 ## Organizers' checks and our own checks
@@ -144,3 +145,7 @@ Configure `.env` as above (or securely copy your existing local file), then run 
 command and report command from this document. Do not copy the original `.venv` or source files.
 If a restricted environment cannot write normal cache directories, use writable `UV_CACHE_DIR` and
 `MPLCONFIGDIR` locations; these settings do not change the agent or its answers.
+
+Step 12 repeated this rehearsal from a clean local clone of `d843931`: frozen sync **0.49 s**, all
+**67 offline tests passed**, documented factory benchmark **5/5 in 5.31 s**, extraction **5/5**.
+The working tree remained clean and the temporary credential file was removed after the checks.

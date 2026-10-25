@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from agent.agent import BuildingAgent
 from agent.answer import _get_client
 from agent.chat_tools import chat_tools
+from agent.voice import install_voice
 from core import Building
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -98,7 +99,7 @@ class Session:
 
 def create_app(data_root: Path | None = None, output_root: Path | None = None,
                client_factory=None, build_function=None, upload_root: Path | None = None,
-               max_sessions: int = 256) -> FastAPI:
+               max_sessions: int = 256, voice_factory=None) -> FastAPI:
     catalog = Catalog(data_root or Path(os.environ.get('AGENT_DATA_DIR', ROOT / 'data')))
     output_root = output_root or ROOT / 'agent_output' / 'sessions'
     upload_root = upload_root or Path(os.environ.get('AGENT_UPLOAD_DIR', ROOT / 'agent_output' / 'uploads'))
@@ -195,6 +196,7 @@ def create_app(data_root: Path | None = None, output_root: Path | None = None,
             log.warning('Chat request failed: %s', type(exc).__name__)
             raise HTTPException(500, 'Chat failed. Session changes were not applied.') from None
 
+    install_voice(app, catalog, voice_factory)
     return app
 
 

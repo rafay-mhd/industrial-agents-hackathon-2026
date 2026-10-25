@@ -2,8 +2,8 @@
 
 Source of milestones: `TEAM_PLAN.md`, section 5.2.
 
-**Current status:** step 11 complete; step 12 next. Real Builder hookup and joint UI browser verification remain pending integration dependencies.
-**Checklist progress:** 11 / 12 steps = 91.7%.
+**Current status:** all 12 Agent milestones complete. ElevenLabs speech input/output, the user's two spoken test turns, submission v2 and clean-clone rehearsal are verified. Real Builder hookup and main UI integration remain pending team dependencies.
+**Checklist progress:** 12 / 12 steps = 100%.
 This is milestone completion, not measured agent accuracy or a time estimate.
 
 - [x] 1. Repository setup and dependencies
@@ -17,7 +17,7 @@ This is milestone completion, not measured agent accuracy or a time estimate.
 - [x] 9. BENCHMARK.md and clean-checkout rehearsal
 - [x] 10. HTTP server, UI actions, and tested Builder hook (real Builder pending)
 - [x] 11. Conversation behavior and tricky-user checks
-- [ ] 12. Submission v2, voice endpoint, and final rehearsal
+- [x] 12. Submission v2, voice input/output, and final rehearsal
 
 After step 12, follow the Sunday release/submission run-book in TEAM_PLAN.md section 6.
 
@@ -486,11 +486,44 @@ uv run --frozen --env-file .env uvicorn agent.server:app --host 127.0.0.1 --port
   not asserted. Local transcripts are ignored under `agent_output/interactions/`; source fixtures and
   the summarized evidence are committed. Source data, Core, starter, official evaluator and v1 CSV unchanged.
 
-## Next: step 12
+## Step 12: voice input/output, v2 and rehearsal (2026-10-24)
 
-Add ElevenLabs text-to-speech (`POST /tts`), rerun dev, generate Team Simran submission v2, and repeat
-the clean-clone rehearsal. Carry forward real Builder hookup and joint browser/UI checks as teammate
-code becomes available. Finishing the checklist does not guarantee perfection on unseen questions.
+- Created a restricted ElevenLabs key at the user's explicit request and saved it only in ignored
+  `.env` with owner-only permissions. Speech-to-text, text-to-speech and Voices read are enabled;
+  ElevenAgents access is disabled. The API returned the available standard voices successfully.
+- Added speech input and output around the existing BuildingAgent, plus the Agent-owned `/voice` page.
+  The transcript is reviewed before calling the unchanged chat endpoint. Voice and typed messages
+  share the same building/session context. No ElevenLabs agent was created.
+- Voice works with catalog building data, including new registrations; vocabulary construction is
+  checked for all 280 supplied buildings. Fixed an observed large-building provider keyword-token
+  rejection with bounded hints and a one-time transcription fallback without hints.
+- Live browser speech upload → transcript → agent/Core → ElevenLabs audio and playback passed on
+  the factory. Residential and Swiss service checks returned Core-verified areas and playable MP3s.
+  See `agent/VOICE.md`. The user then ran two spoken route requests through the browser: the Office
+  route was 151.1 m; changing to Kitchen 0.28 retained the Warehouse start and wheelchair constraint
+  and returned 53.87 m. Both transcription/chat/TTS chains returned 200, and the browser showed the
+  correct replies, playable audio and playback progress. This is observed behavior, not a universal speech guarantee.
+- **67 offline tests pass**, including 11 speech tests; Core oracle **138/138**.
+- Full live dev rerun: **138/138 answers and 138/138 extraction checks**, no execution errors.
+- Generated 145 fresh test replies, validated the CSV, and saved `submissions/team_simran_v2.csv`
+  (5,777 bytes). Test answers remain unscored because the organizers provide no test answer key.
+- Clean local clone of implementation commit `d843931`: frozen dependency install succeeded in
+  0.49 s; all 67 offline tests passed; the exact BENCHMARK.md factory command passed **5/5** in
+  5.31 s with **5/5 extraction checks**. The clone's working tree stayed clean. Temporary credentials
+  were removed in `finally`; logs/timings are under ignored `agent_output/step12_clean_clone/`.
+- Restarted only our port-8012 server after the user's two turns and opened a fresh factory session.
+  This loads the final large-building fix. Existing unrelated services on 8000/8010 were left running.
+  Both the factory and Swiss sample transcriptions passed again against the restarted HTTP server.
+- Voice and benchmark test artifacts are local/ignored. The v2 CSV is versioned; hidden-test accuracy
+  remains unknown. No official submission upload or main-branch merge was performed.
+
+## Team integration and release work still ahead
+
+Connect the real Builder and finish the main Interface integration. The main UI microphone still uses
+browser recognition; both ElevenLabs directions work on the Agent-owned `/voice` page. Interface must
+use the same backend origin/session, connect `/transcribe`, and complete the action-rendering handoff.
+Follow TEAM_PLAN.md §6 for the Sunday release and actual submission. Completing this checklist does
+not guarantee perfection on unseen buildings, questions, accents or noisy recordings.
 
 ## Integration points to keep visible
 

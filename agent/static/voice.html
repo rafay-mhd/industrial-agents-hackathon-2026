@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Team Simran · Talk to your building</title>
+<style>
+body{font:17px/1.5 system-ui,sans-serif;background:#f4f6f4;color:#182d26;margin:0}main{max-width:800px;margin:40px auto;padding:24px}h1{font-size:32px;margin-bottom:8px}p{margin-top:8px}label{display:block;font-weight:600;margin-top:20px}select,textarea,button{font:inherit;border:1px solid #b8c6bf;border-radius:9px;padding:12px}select,textarea{box-sizing:border-box;width:100%;background:white}textarea{min-height:110px}button{cursor:pointer;background:#17634a;color:white}button:disabled{opacity:.45;cursor:default}.row{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}.secondary{background:white;color:#174631}.card{background:white;border:1px solid #dce3de;border-radius:12px;padding:20px;margin:16px 0;white-space:pre-wrap}.caption{color:#54685e;font-size:14px}#status{min-height:28px}audio{width:100%;margin-top:10px}summary{cursor:pointer}#actions{font-size:15px}#conversation{border-top:1px solid #dce3de;margin-top:24px}
+</style>
+<main>
+<p class="caption">TEAM SIMRAN · BUILDING GUIDE</p>
+<h1>Talk to your building</h1>
+<p>Ask out loud, check the words, then hear your building agent’s answer.</p>
+<label for="building">Building</label><select id="building" disabled></select>
+<div class="row"><button id="new" class="secondary" disabled>New conversation</button><button id="refresh" class="secondary">Refresh buildings</button></div>
+<label for="language">Spoken language</label><select id="language"><option value="">Detect automatically</option><option value="en">English</option><option value="de">German</option></select>
+<div class="row"><button id="record" disabled>Record question</button><button id="stop" class="secondary" disabled>Stop recording</button></div>
+<label for="upload">Or choose an audio recording</label><input id="upload" type="file" accept="audio/*,video/mp4" disabled>
+<label for="question">Review your question</label><textarea id="question" maxlength="12000" placeholder="Check room numbers and names here. You can also type a question."></textarea>
+<div class="row"><button id="send" disabled>Send to building agent</button></div>
+<p id="status" role="status" aria-live="polite">Loading buildings…</p>
+<section id="conversation" aria-label="Conversation"></section>
+<p class="caption">Your recording is sent to ElevenLabs for transcription. Our building agent handles your question; ElevenLabs reads its answer. Microphone recording requires localhost or HTTPS.</p>
+</main>
+<script type="module" src="/voice-assets/voice.js"></script>
+</html>
