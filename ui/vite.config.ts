@@ -11,7 +11,6 @@ export default defineConfig(({ mode }) => {
         "/api": {
           target: env.AGENT_API_URL || "http://127.0.0.1:8012",
           changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/api/, ""),
         },
       },
     },

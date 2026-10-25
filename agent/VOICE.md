@@ -6,6 +6,10 @@ knowledge base or alternate tool implementation is involved.
 
 ## Use it
 
+The integrated Inside UI on `main` is the recommended voice interface: build `ui/`, then run `agent.web:app` on port 8012 and open `http://127.0.0.1:8012`. Its automatic voice turns use the same `/api` agent and speech endpoints. See `ui/README.md` for the complete setup. The standalone recorder below is also available at `/api/voice` on the combined server.
+
+To run only the original standalone recorder:
+
 ```bash
 uv sync --frozen
 uv run --frozen --env-file .env uvicorn agent.server:app --host 127.0.0.1 --port 8012

@@ -1,5 +1,26 @@
 # Track 01 — Google Maps for Every Building: student kit
 
+## Run Team Simran’s integrated app
+
+`main` contains the Inside frontend, current Core/Claude backend, ElevenLabs speech support and all 22 Blender models from `ui-models`.
+Requires `uv` and Node 22.18+. Keep API keys in the root `.env` (use `.env.example` for a new setup; never overwrite an existing `.env`).
+
+```sh
+uv sync --frozen
+npm --prefix ui ci
+npm --prefix ui run build
+uv run --frozen --env-file .env uvicorn agent.web:app --host 127.0.0.1 --port 8012
+```
+
+Open **http://127.0.0.1:8012**. This single server serves the UI, `/models/*.glb`, and the existing agent under `/api`.
+Claude handles the conversation and calls Core; ElevenLabs supplies speech input/output to that same agent.
+For frontend development, keep this backend running and run `npm --prefix ui run dev -- --host localhost --port 5174 --strictPort` in another terminal.
+The development UI at **http://localhost:5174** proxies `/api` to the combined server. See [ui/README.md](ui/README.md) for architecture, verification and capability boundaries.
+
+The original API-only entry point, `agent.server:app`, remains available for existing clients; the frontend’s default setup uses `agent.web:app`.
+
+## The challenge
+
 Build a conversational agent that knows a building as well as its facility manager does. You give it a building, and people just ask it things:
 
 - *"Where is the 3D printer?"*

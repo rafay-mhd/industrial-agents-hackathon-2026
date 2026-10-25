@@ -17,6 +17,7 @@ import type { Vec3 } from "./sceneMath";
 import type { BuildingData, Opening, Space } from "../types";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { createAssetScene, assetHit } from "./assetScene";
+import { loadAssetModels } from "./assetModels";
 import { describeAsset } from "./assetCatalog";
 import type { MapProps, Selection } from "../components/IndoorMap";
 import { connectorLayouts } from "./connectorLayout";
@@ -243,7 +244,7 @@ export function createBuildingWorld(
       (data.assets ?? []).filter((a) => a.floor_id === floor.id),
       height,
     );
-    keep(assets);
+    keep({ dispose: () => groups.get(floor.id)?.assets.dispose() });
     group.add(walls, roofs, overlays, assets.group);
     root.add(group);
     const tag = document.createElement("div");
@@ -1306,6 +1307,38 @@ export function createBuildingWorld(
     frame = requestAnimationFrame(render);
   };
   frame = requestAnimationFrame(render);
+  let disposed = false;
+  let teamModels: Awaited<ReturnType<typeof loadAssetModels>> | undefined;
+  void loadAssetModels(
+    data.assets ?? [],
+    `${import.meta.env.BASE_URL}models/`,
+  ).then((models) => {
+    if (disposed) {
+      models.forEach((model) => model.dispose());
+      return;
+    }
+    teamModels = models;
+    if (!models.size) return;
+    for (const [floorId, floor] of groups) {
+      const previous = floor.assets;
+      const replacement = createAssetScene(
+        (data.assets ?? []).filter((asset) => asset.floor_id === floorId),
+        floor.height,
+        models,
+      );
+      replacement.group.visible = previous.group.visible;
+      if (options)
+        replacement.update(
+          options.layers.assets,
+          options.selected?.kind === "asset" ? options.selected.id : undefined,
+          options.state.assets,
+        );
+      floor.group.remove(previous.group);
+      previous.dispose();
+      floor.assets = replacement;
+      floor.group.add(replacement.group);
+    }
+  });
   return {
     bindNavigation(store: PlaybackStore, avatar: number) {
       navigation = store;
@@ -1317,6 +1350,7 @@ export function createBuildingWorld(
     focus,
     zoom,
     dispose() {
+      disposed = true;
       cancelAnimationFrame(frame);
       observer.disconnect();
       controls.dispose();
@@ -1329,6 +1363,7 @@ export function createBuildingWorld(
       transferLine.geometry.dispose();
       overlayResources.forEach((r) => r.dispose());
       resources.forEach((r) => r.dispose());
+      teamModels?.forEach((model) => model.dispose());
       sun.shadow.map?.dispose();
       renderer.dispose();
       renderer.forceContextLoss();

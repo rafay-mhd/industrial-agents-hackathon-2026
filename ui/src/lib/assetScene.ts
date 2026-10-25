@@ -3,15 +3,20 @@ import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.j
 import type { Asset } from "../types";
 import { describeAsset, objectParts } from "./assetCatalog.ts";
 import type { Part } from "./assetCatalog.ts";
+import { modelForType } from "./assetModels.ts";
+import type { ModelName, ModelTemplate } from "./assetModels.ts";
 
 type Batch = {
   mesh: THREE.InstancedMesh;
   ids: string[];
   matrices: THREE.Matrix4[];
-  color: THREE.Color;
 };
 /** Batches primitive parts, rather than issuing a draw call for every piece of furniture. */
-export function createAssetScene(assets: Asset[], floorHeight: number) {
+export function createAssetScene(
+  assets: Asset[],
+  floorHeight: number,
+  models?: ReadonlyMap<ModelName, ModelTemplate>,
+) {
   const group = new THREE.Group();
   const geometry = {
     box: new THREE.BoxGeometry(),
@@ -63,8 +68,8 @@ export function createAssetScene(assets: Asset[], floorHeight: number) {
   const buckets = new Map<
     string,
     {
-      shape: Part["shape"];
-      material: Part["material"];
+      geometry: THREE.BufferGeometry;
+      material: THREE.Material | THREE.Material[];
       matrices: THREE.Matrix4[];
       ids: string[];
     }
@@ -75,6 +80,32 @@ export function createAssetScene(assets: Asset[], floorHeight: number) {
     const d = describeAsset(asset, floorHeight),
       key = asset.type ?? "unknown",
       parts = objectParts(d.family, key);
+    const parent = assetTransform(asset, floorHeight);
+    bounds.set(
+      asset.id,
+      new THREE.Box3(
+        new THREE.Vector3(-0.5, 0, -0.5),
+        new THREE.Vector3(0.5, 1, 0.5),
+      ).applyMatrix4(parent),
+    );
+    const modelName = modelForType(asset.type);
+    const model = modelName && models?.get(modelName);
+    if (model) {
+      model.parts.forEach((part, i) => {
+        const batchKey = `model:${modelName}:${i}`;
+        if (!buckets.has(batchKey))
+          buckets.set(batchKey, {
+            geometry: part.geometry,
+            material: part.material,
+            matrices: [],
+            ids: [],
+          });
+        const bucket = buckets.get(batchKey)!;
+        bucket.matrices.push(parent.clone());
+        bucket.ids.push(asset.id);
+      });
+      continue;
+    }
     let locals = templateCache.get(key);
     if (!locals) {
       locals = parts.map((p) =>
@@ -107,20 +138,12 @@ export function createAssetScene(assets: Asset[], floorHeight: number) {
       locals = locals.map((m) => normalize.clone().multiply(m));
       templateCache.set(key, locals);
     }
-    const parent = assetTransform(asset, floorHeight);
-    bounds.set(
-      asset.id,
-      new THREE.Box3(
-        new THREE.Vector3(-0.5, 0, -0.5),
-        new THREE.Vector3(0.5, 1, 0.5),
-      ).applyMatrix4(parent),
-    );
     parts.forEach((p, i) => {
       const batchKey = p.shape + ":" + p.material;
       if (!buckets.has(batchKey))
         buckets.set(batchKey, {
-          shape: p.shape,
-          material: p.material,
+          geometry: geometry[p.shape],
+          material: materials[p.material],
           matrices: [],
           ids: [],
         });
@@ -132,8 +155,8 @@ export function createAssetScene(assets: Asset[], floorHeight: number) {
   const batches: Batch[] = [];
   for (const bucket of buckets.values()) {
     const mesh = new THREE.InstancedMesh(
-      geometry[bucket.shape],
-      materials[bucket.material],
+      bucket.geometry,
+      bucket.material,
       bucket.ids.length,
     );
     mesh.castShadow = true;
@@ -150,7 +173,6 @@ export function createAssetScene(assets: Asset[], floorHeight: number) {
       mesh,
       ids: bucket.ids,
       matrices: bucket.matrices,
-      color: materials[bucket.material].color,
     });
   }
   let previous = "";

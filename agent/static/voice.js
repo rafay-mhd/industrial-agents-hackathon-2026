@@ -29,11 +29,11 @@ function resetConversation() {
 async function loadBuildings() {
   controls(true);
   try {
-    const buildings = await (await checked(await fetch('/buildings'))).json();
+    const buildings = await (await checked(await fetch('buildings'))).json();
     $('building').replaceChildren(...buildings.map(b => new Option(`${b.name} · ${b.id}`, b.id)));
     if (!buildings.some(b => b.id === buildingId)) { buildingId = buildings[0]?.id || ''; resetConversation(); }
     $('building').value = buildingId;
-    const configuration = await (await checked(await fetch('/voice/status'))).json();
+    const configuration = await (await checked(await fetch('voice/status'))).json();
     status(configuration.configured ? 'Ready. Record a question or type below.' : 'ElevenLabs is not configured. Text chat is available.');
   } catch (error) { status(error.message); }
   finally { controls(false); }
@@ -44,7 +44,7 @@ async function transcribe(blob) {
   status('Transcribing your question with ElevenLabs…');
   const form = new FormData(); form.append('file', blob, 'question');
   if ($('language').value) form.append('language_code', $('language').value);
-  const result = await (await checked(await fetch(`/buildings/${encodeURIComponent(buildingId)}/transcribe`, {method:'POST',body:form}))).json();
+  const result = await (await checked(await fetch(`buildings/${encodeURIComponent(buildingId)}/transcribe`, {method:'POST',body:form}))).json();
   $('question').value = result.text;
   status('Check the transcript, especially room numbers, then press Send.');
 }
@@ -82,7 +82,7 @@ async function speak(text, container, autoplay=true) {
   const chunks = text.match(/[\s\S]{1,4000}(?:\s|$)|[\s\S]{1,4000}/g) || [];
   const players = [];
   for (const chunk of chunks) {
-    const response = await checked(await fetch('/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:chunk})}));
+    const response = await checked(await fetch('tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:chunk})}));
     const url = URL.createObjectURL(await response.blob()); objectUrls.add(url);
     const audio = document.createElement('audio'); audio.controls=true; audio.src=url; audio.setAttribute('aria-label','Spoken agent reply');
     audio.onplay=()=>{if(currentAudio && currentAudio!==audio) currentAudio.pause();currentAudio=audio;};
@@ -95,7 +95,7 @@ $('send').onclick = async () => {
   const message = $('question').value.trim(); if (!message || busy) return;
   controls(true); stopAudio(); status('Your building agent is working…');
   try {
-    const result = await (await checked(await fetch(`/buildings/${encodeURIComponent(buildingId)}/chat`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:sessionId,message})}))).json();
+    const result = await (await checked(await fetch(`buildings/${encodeURIComponent(buildingId)}/chat`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:sessionId,message})}))).json();
     const card=document.createElement('article'); card.className='card';
     const question=document.createElement('strong'); question.textContent=message; card.append(question);
     if (result.understood) { const understood=document.createElement('p'); understood.className='caption'; understood.textContent=result.understood; card.append(understood); }
