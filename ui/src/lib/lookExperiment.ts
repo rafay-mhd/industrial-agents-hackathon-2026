@@ -18,6 +18,10 @@ export const LOOK = {
   /** Each room's walls are pulled this far into the room, so two rooms' walls on a shared line and the
    * exterior shell never sit in the same plane (that coincidence shows as flicker). 0 = off. */
   wallInset_m: 0.07,
+  /** Interior walls half see-through and nearly colourless. wallTint: 0 = full room colour, 1 = white. */
+  translucentWalls: true,
+  wallOpacity: 0.5,
+  wallTint: 0.8,
   ceilingColor: "#f3efe8",
   ceilingOpacity: 0.08,
   envelopeOpacity: 0.06,

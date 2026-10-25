@@ -403,16 +403,22 @@ export function createBuildingWorld(
       const merged = mergeGeometries(parts);
       parts.forEach((p) => p.dispose());
       if (merged) {
-        const mesh = new THREE.Mesh(
-          keep(merged),
-          material(new THREE.Color(color).multiplyScalar(0.77)),
-        );
+        const wallColor = new THREE.Color(color).multiplyScalar(0.77);
+        if (LOOK.translucentWalls)
+          wallColor.lerp(new THREE.Color("#f6f4ef"), LOOK.wallTint);
+        const mesh = new THREE.Mesh(keep(merged), material(wallColor));
+        if (LOOK.translucentWalls) {
+          mesh.material.transparent = true;
+          mesh.material.opacity = LOOK.wallOpacity;
+          mesh.material.depthWrite = false;
+        }
         // Some source floor volumes overlap. Resolve coplanar display surfaces
         // deterministically without changing any supplied height or position.
         mesh.material.polygonOffset = true;
         mesh.material.polygonOffsetFactor = -index * 2;
         mesh.material.polygonOffsetUnits = -index * 2;
-        mesh.castShadow = mesh.receiveShadow = true;
+        mesh.castShadow = !LOOK.translucentWalls;
+        mesh.receiveShadow = true;
         mesh.userData.wallSpaces = parts.map((p) => p.userData.spaceId);
         walls.add(mesh);
         picks.push(mesh);
