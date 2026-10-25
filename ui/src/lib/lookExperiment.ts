@@ -21,7 +21,7 @@ export const LOOK = {
   /** Interior walls half see-through and nearly colourless. wallTint: 0 = full room colour, 1 = white. */
   translucentWalls: true,
   wallOpacity: 0.5,
-  wallTint: 0.8,
+  wallTint: 0.45,
   ceilingColor: "#f3efe8",
   ceilingOpacity: 0.08,
   envelopeOpacity: 0.06,
