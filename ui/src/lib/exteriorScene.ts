@@ -83,6 +83,7 @@ export function createExteriorScene(
       roughness: 0.9,
       metalness: 0,
       depthWrite: false,
+      depthTest: false,
       side: THREE.DoubleSide,
     }),
   );

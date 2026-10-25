@@ -15,6 +15,9 @@ export const LOOK = {
   roomWallCap_m: 3.2,
   /** Ceilings in one pale neutral instead of each room's colour. */
   neutralCeilings: true,
+  /** Each room's walls are pulled this far into the room, so two rooms' walls on a shared line and the
+   * exterior shell never sit in the same plane (that coincidence shows as flicker). 0 = off. */
+  wallInset_m: 0.07,
   ceilingColor: "#f3efe8",
   ceilingOpacity: 0.08,
   envelopeOpacity: 0.06,

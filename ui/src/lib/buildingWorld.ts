@@ -326,7 +326,7 @@ export function createBuildingWorld(
             )
           : geom;
         roof = new THREE.Mesh(roofGeometry, roofMaterial);
-        roof.position.y = wallHeight - 0.16;
+        roof.position.y = wallHeight - 0.2;
         roof.receiveShadow = true;
         roof.castShadow = !LOOK.ceilings;
         if (LOOK.ceilings) roof.raycast = () => {};
@@ -352,13 +352,20 @@ export function createBuildingWorld(
             dy = segment.b[1] - segment.a[1],
             length = Math.hypot(dx, dy);
           if (length < 0.001) continue;
+          const mx = (segment.a[0] + segment.b[0]) / 2,
+            my = (segment.a[1] + segment.b[1]) / 2,
+            nx = -dy / length,
+            ny = dx / length,
+            inset = LOOK.wallInset_m,
+            inward =
+              inset && pointInside([mx + nx * 0.05, my + ny * 0.05], space.polygon)
+                ? 1
+                : -1,
+            ox = inset ? inward * nx * inset : 0,
+            oy = inset ? inward * ny * inset : 0;
           const wall = new THREE.BoxGeometry(length, wallHeight, 0.1);
           wall.rotateY(Math.atan2(dy, dx));
-          wall.translate(
-            (segment.a[0] + segment.b[0]) / 2,
-            wallHeight / 2,
-            -(segment.a[1] + segment.b[1]) / 2,
-          );
+          wall.translate(mx + ox, wallHeight / 2, -(my + oy));
           wall.userData.spaceId = space.id;
           const parts = batches.get(style.solid) ?? [];
           parts.push(wall);
