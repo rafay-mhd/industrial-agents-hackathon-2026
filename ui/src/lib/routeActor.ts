@@ -98,7 +98,7 @@ export function createRouteActor(
       coatColor = COATS[variant % 4];
     skin.color.set(skinColor);
     coat.color.set(coatColor);
-    if (!figure) return;
+    if (!figure || figure === figures.wheelchair_user) return; // the friend keeps his own colours
     for (const [name, material] of figure.materials) {
       if (!(material instanceof THREE.MeshStandardMaterial)) continue;
       if (name === "Skin") material.color.set(skinColor);

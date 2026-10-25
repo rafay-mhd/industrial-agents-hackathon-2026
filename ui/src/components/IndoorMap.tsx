@@ -71,6 +71,7 @@ export default function IndoorMap({
   selected,
   location,
   avatar,
+  wheelchair,
   onSelect,
   onWarning,
 }: MapProps) {
@@ -774,6 +775,7 @@ export default function IndoorMap({
             >
               <PixelPerson
                 variant={avatar}
+                wheelchair={wheelchair}
                 title="Your selected location"
                 inMap
               />
@@ -806,6 +808,7 @@ export default function IndoorMap({
             <g transform="translate(-8,-23)">
               <PixelPerson
                 variant={avatar}
+                wheelchair={wheelchair}
                 title="Route preview character"
                 inMap
               />

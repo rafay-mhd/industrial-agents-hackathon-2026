@@ -1009,7 +1009,7 @@ export default function App() {
                 <RotateCcw size={12} />
               </button>
               <div className="avatar-button" aria-hidden="true">
-                <PixelPerson variant={avatar} />
+                <PixelPerson variant={avatar} wheelchair={stepFree} />
               </div>
             </div>
           </header>
@@ -1544,6 +1544,7 @@ export default function App() {
                             selected={selection}
                             location={location}
                             avatar={avatar}
+                            wheelchair={stepFree}
                             onSelect={setSelection}
                             onWarning={openWarnings}
                           />
@@ -2034,7 +2035,7 @@ export default function App() {
                           ) : (
                             <>
                               You
-                              <PixelPerson variant={avatar} />
+                              <PixelPerson variant={avatar} wheelchair={stepFree} />
                             </>
                           )}
                           <time>{message.timestamp}</time>
@@ -2131,7 +2132,7 @@ export default function App() {
                 </aside>
                 <section className="journey-card" inert={expandedMap}>
                   <div className="journey-person">
-                    <PixelPerson variant={avatar} />
+                    <PixelPerson variant={avatar} wheelchair={stepFree} />
                     <span className="person-ring" />
                   </div>
                   <div className="journey-location">
