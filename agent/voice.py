@@ -1,13 +1,14 @@
 """ElevenLabs speech I/O only. BuildingAgent remains the sole reasoning/tool agent."""
 
 import os
+import json
 from itertools import zip_longest
 from pathlib import Path
 import re
 
 import httpx
 from fastapi import File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.concurrency import run_in_threadpool
@@ -56,6 +57,13 @@ def speech_text(text: str) -> str:
     return text.strip()
 
 
+def quota_exhausted(response):
+    try:
+        detail=response.json().get('detail',{})
+        return isinstance(detail,dict) and (detail.get('status')=='quota_exceeded' or detail.get('code')=='quota_exceeded')
+    except (ValueError,AttributeError):return False
+
+
 class ElevenLabsVoice:
     def __init__(self, *, api_key=None, voice_id=None, transport=None):
         self.api_key = api_key if api_key is not None else os.environ.get('ELEVENLABS_API_KEY', '')
@@ -74,6 +82,8 @@ class ElevenLabsVoice:
             raise HTTPException(504, 'ElevenLabs timed out. Retry the audio request.') from None
         except httpx.RequestError:
             raise HTTPException(502, 'Could not reach ElevenLabs. Text chat is still available.') from None
+        if not response.is_success and quota_exhausted(response):
+            raise HTTPException(429,'ElevenLabs speech credits are exhausted. Add speech credits to resume voice; text chat still works.')
         if response.status_code == 429:
             raise HTTPException(429, 'ElevenLabs is rate limited or out of credits. Retry later or check the account.')
         if response.status_code in (401, 403):
@@ -121,6 +131,43 @@ class ElevenLabsVoice:
             raise HTTPException(502, 'ElevenLabs returned no playable audio.')
         return response.content
 
+    def realtime_token(self):
+        response=self.request('single-use-token/realtime_scribe')
+        try:
+            token=response.json()['token']
+            if not isinstance(token,str) or not 8<len(token)<2048:raise ValueError()
+            return token
+        except (ValueError,KeyError,TypeError):
+            raise HTTPException(502,'Could not start live transcription.') from None
+
+    def open_speech_stream(self,text:str):
+        if not self.api_key.strip():raise HTTPException(503,'ElevenLabs is not configured.')
+        text=speech_text(text)
+        if not text:raise HTTPException(422,'No readable text to speak.')
+        client=httpx.Client(base_url='https://api.elevenlabs.io/v1/',headers={'xi-api-key':self.api_key},
+                            transport=self.transport,timeout=httpx.Timeout(60,connect=10),follow_redirects=False)
+        try:
+            request=client.build_request('POST',f'text-to-speech/{self.voice_id}/stream',
+                params={'output_format':'pcm_24000'},json={'text':text,'model_id':'eleven_flash_v2_5'})
+            response=client.send(request,stream=True)
+            if not response.is_success:
+                response.read()
+                exhausted=quota_exhausted(response)
+                code=429 if response.status_code==429 else 503 if response.status_code in (401,403) else 502
+                response.close();client.close()
+                if exhausted:raise HTTPException(429,'ElevenLabs speech credits are exhausted. Add speech credits to resume voice; text chat still works.')
+                raise HTTPException(code,'Could not stream speech. Check ElevenLabs access and credits.')
+        except httpx.TimeoutException:
+            client.close();raise HTTPException(504,'Speech streaming timed out.') from None
+        except httpx.RequestError:
+            client.close();raise HTTPException(502,'Could not reach the speech service.') from None
+        def chunks():
+            try:
+                yield from response.iter_bytes(chunk_size=4096)
+            finally:
+                response.close();client.close()
+        return chunks()
+
 
 class SpeechRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
@@ -146,7 +193,19 @@ def install_voice(app, catalog, voice_factory=None):
     @app.get('/voice/status')
     def voice_status():
         return {'configured': bool(os.environ.get('ELEVENLABS_API_KEY', '').strip()),
-                'speech_to_text': 'scribe_v2', 'text_to_speech': 'eleven_multilingual_v2'}
+                'speech_to_text': 'scribe_v2_realtime', 'text_to_speech': 'eleven_flash_v2_5',
+                'realtime':True,'streaming':True}
+
+    @app.post('/buildings/{building_id}/voice-token')
+    def token(building_id:str):
+        data=catalog.get(building_id)
+        return Response(content=json.dumps({'token':factory().realtime_token(),
+            'keyterms':building_keyterms(data)[:50]}),media_type='application/json',headers={'Cache-Control':'no-store'})
+
+    @app.post('/tts/stream')
+    def tts_stream(request:SpeechRequest):
+        return StreamingResponse(factory().open_speech_stream(request.text),media_type='application/octet-stream',
+            headers={'Cache-Control':'no-store','X-Audio-Sample-Rate':'24000','X-Accel-Buffering':'no'})
 
     @app.post('/buildings/{building_id}/transcribe')
     async def transcribe(building_id: str, file: UploadFile = File(...),

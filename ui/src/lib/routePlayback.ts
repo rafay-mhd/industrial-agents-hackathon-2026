@@ -2,6 +2,7 @@ import type { BuildingData, RouteAction, VerticalConnector } from "../types";
 import type { Location, Point } from "./model";
 import { floorGeometry, label, pointInside } from "./model.ts";
 import { connectorLayouts } from "./connectorLayout.ts";
+import type { LivePosition } from "./walking";
 export type RoutePoint = [number, number, number]; // x, elevation, negative source y
 export type TravelLeg = {
   kind: "walk" | "connector";
@@ -18,6 +19,7 @@ export type RoutePlan = {
   legs: TravelLeg[];
   distance: number;
   complete: boolean;
+  verified?: boolean;
   notice: string;
   startLabel: string;
   endLabel: string;
@@ -62,15 +64,46 @@ export function buildRoutePlan(
     ),
   };
   if (!data || !route) return plan;
-  const entries = data.floors.flatMap((f) => {
-    const supplied = route.floors[String(f.level)] ?? [];
-    const points = supplied.every(
-      (p) => p.length === 2 && p.every(Number.isFinite),
-    )
-      ? supplied
-      : [];
-    return points.length ? [{ floor: f, points }] : [];
-  });
+  plan.verified = route.geometry_valid === true;
+  if (route.geometry_valid === false) {
+    plan.notice =
+      route.geometry_notice ??
+      "This route cannot be drawn without crossing an unverified wall.";
+    return plan;
+  }
+  const explicit = !!route.segments?.length;
+  const entries = explicit
+    ? route.segments!.flatMap((s) => {
+        const floor = data.floors.find((f) => f.id === s.floor_id);
+        return floor &&
+          s.points.length &&
+          s.points.every((p) => p.length === 2 && p.every(Number.isFinite))
+          ? [
+              {
+                floor,
+                points: s.points,
+                exit_connector_id: s.exit_connector_id,
+              },
+            ]
+          : [];
+      })
+    : data.floors.flatMap((f) => {
+        const supplied = route.floors[String(f.level)] ?? [];
+        const points = supplied.every(
+          (p) => p.length === 2 && p.every(Number.isFinite),
+        )
+          ? supplied
+          : [];
+        return points.length
+          ? [
+              {
+                floor: f,
+                points,
+                exit_connector_id: undefined as string | undefined,
+              },
+            ]
+          : [];
+      });
   if (!entries.length) {
     plan.notice = "The agent supplied directions without route geometry.";
     return plan;
@@ -83,6 +116,7 @@ export function buildRoutePlan(
   ) => {
     const matches = (data.vertical_connectors ?? []).filter(
       (c) =>
+        (!a.exit_connector_id || c.id === a.exit_connector_id) &&
         c.floor_ids.includes(a.floor.id) &&
         c.floor_ids.includes(b.floor.id) &&
         c.space_ids.some((id) => {
@@ -130,8 +164,9 @@ export function buildRoutePlan(
           closeTo(e.points[0], s.polygon),
       ),
     );
-  const start =
-    locationStart >= 0
+  const start = explicit
+    ? 0
+    : locationStart >= 0
       ? locationStart
       : beginnings.length === 1
         ? beginnings[0]
@@ -144,26 +179,31 @@ export function buildRoutePlan(
     visited = new Set([start]);
   let current = start;
   while (visited.size < entries.length) {
-    const next = links[current].filter((l) => !visited.has(l.next));
+    const next = links[current].filter((l) =>
+      explicit ? l.next === current + 1 : !visited.has(l.next),
+    );
     if (next.length !== 1) break;
     ordered.at(-1)!.connector = next[0].connector;
     current = next[0].next;
     visited.add(current);
     ordered.push({ index: current });
   }
-  const missingGeometry = Object.entries(route.floors).some(
-    ([level, points]) =>
-      points.length &&
-      (!data.floors.some((f) => String(f.level) === level) ||
-        !points.every((p) => p.length === 2 && p.every(Number.isFinite))),
-  );
+  const missingGeometry =
+    (explicit && entries.length !== route.segments!.length) ||
+    Object.entries(route.floors).some(
+      ([level, points]) =>
+        points.length &&
+        (!data.floors.some((f) => String(f.level) === level) ||
+          !points.every((p) => p.length === 2 && p.every(Number.isFinite))),
+    );
   const outside = route.steps.some((s) =>
     /\b(outside|outdoor|re.enter)\b/i.test(s),
   );
   const ambiguous =
     entries.length > 1 &&
     (visited.size !== entries.length ||
-      (locationStart < 0 &&
+      (!explicit &&
+        locationStart < 0 &&
         beginnings.length !== 1 &&
         textStarts.length !== 1));
   if (ambiguous || outside || missingGeometry) {
@@ -260,6 +300,8 @@ export function buildRoutePlan(
   return plan;
 }
 export type PlaybackFrame = {
+  firstPerson: boolean;
+  live: LivePosition | null;
   active: boolean;
   playing: boolean;
   finished: boolean;
@@ -331,9 +373,13 @@ export function createPlaybackStore() {
     speed = 2,
     revision = 0,
     lastEmit = 0;
+  let firstPerson = false,
+    live: LivePosition | null = null;
   const listeners = new Set<() => void>(),
     frames = new Set<(frame: PlaybackFrame) => void>();
   const frame = (): PlaybackFrame => ({
+    firstPerson,
+    live,
     active: plan.legs.length > 0,
     playing,
     finished: plan.legs.length > 0 && distance >= plan.distance,
@@ -344,6 +390,9 @@ export function createPlaybackStore() {
     plan,
     revision,
     ...sampleRoute(plan, distance),
+    ...(live
+      ? { point: live.point, heading: live.heading, floorId: live.floorId }
+      : {}),
   });
   let current = frame(),
     snapshot = current;
@@ -377,6 +426,7 @@ export function createPlaybackStore() {
       };
     },
     setPlan(next: RoutePlan) {
+      live = null;
       plan = next;
       distance = 0;
       playing = false;
@@ -385,7 +435,7 @@ export function createPlaybackStore() {
       emit();
     },
     play(value: boolean) {
-      playing = value && plan.distance > 0 && distance < plan.distance;
+      playing = !live && value && plan.distance > 0 && distance < plan.distance;
       emit();
     },
     seek(progress: number) {
@@ -395,6 +445,7 @@ export function createPlaybackStore() {
       emit();
     },
     restart() {
+      live = null;
       distance = 0;
       playing = plan.distance > 0;
       follow = true;
@@ -410,8 +461,21 @@ export function createPlaybackStore() {
       if ([1, 2, 4].includes(value)) speed = value;
       emit();
     },
+    setFirstPerson(value: boolean) {
+      firstPerson = value;
+      follow = true;
+      revision++;
+      emit();
+    },
+    setLive(value: LivePosition | null, progress?: number) {
+      live = value;
+      playing = false;
+      if (progress !== undefined)
+        distance = Math.max(0, Math.min(plan.distance, progress));
+      emit();
+    },
     tick(seconds: number) {
-      if (!playing) return;
+      if (!playing || live) return;
       distance = Math.min(
         plan.distance,
         distance + Math.max(0, Math.min(seconds, 0.1)) * 1.4 * speed,
@@ -424,29 +488,31 @@ export function createPlaybackStore() {
 
 /** Completed 2D trail, sampled on the same polyline as the moving character. */
 export function travelledFloorPath(frame: PlaybackFrame, floorId: string) {
-  const leg = frame.plan.legs.find(
-    (l) => l.kind === "walk" && l.floorId === floorId,
-  );
-  if (!leg || frame.distance <= leg.start) return "";
-  const remaining = Math.min(leg.distance, frame.distance - leg.start);
-  const points = [leg.points[0]];
-  let covered = 0;
-  for (let i = 1; i < leg.points.length; i++) {
-    const a = leg.points[i - 1],
-      b = leg.points[i],
-      length = Math.hypot(...b.map((v, k) => v - a[k]));
-    if (covered + length <= remaining) {
-      points.push(b);
-      covered += length;
-      continue;
-    }
-    if (length)
-      points.push(
-        a.map(
-          (v, k) => v + ((b[k] - v) * (remaining - covered)) / length,
-        ) as RoutePoint,
-      );
-    break;
-  }
-  return points.map((p, i) => `${i ? "L" : "M"}${p[0]},${p[2]}`).join(" ");
+  return frame.plan.legs
+    .filter((l) => l.kind === "walk" && l.floorId === floorId)
+    .map((leg) => {
+      if (!leg || frame.distance <= leg.start) return "";
+      const remaining = Math.min(leg.distance, frame.distance - leg.start);
+      const points = [leg.points[0]];
+      let covered = 0;
+      for (let i = 1; i < leg.points.length; i++) {
+        const a = leg.points[i - 1],
+          b = leg.points[i],
+          length = Math.hypot(...b.map((v, k) => v - a[k]));
+        if (covered + length <= remaining) {
+          points.push(b);
+          covered += length;
+          continue;
+        }
+        if (length)
+          points.push(
+            a.map(
+              (v, k) => v + ((b[k] - v) * (remaining - covered)) / length,
+            ) as RoutePoint,
+          );
+        break;
+      }
+      return points.map((p, i) => `${i ? "L" : "M"}${p[0]},${p[2]}`).join(" ");
+    })
+    .join(" ");
 }

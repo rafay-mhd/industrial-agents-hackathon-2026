@@ -49,6 +49,9 @@ import type {
   BuildingData,
   ChatMessage,
   ChatResponse,
+  ChatAction,
+  RouteUpdateAction,
+  BuildingChange,
   Space,
   Asset,
 } from "./types";
@@ -72,6 +75,7 @@ import type { Layers, Location, MapState } from "./lib/model";
 import {
   RoutePlaybackProvider,
   RoutePlayer,
+  FloorTransferOverlay,
   RouteReplayButton,
   WrittenRoute,
   RouteExploreButton,
@@ -84,11 +88,23 @@ import type { Sheet } from "./components/ExplorerSheet";
 import { useVoice } from "./hooks/useVoice";
 import "./App.css";
 import "./experience.css";
+import "./maps.css";
+import { DirectionsPanel } from "./components/DirectionsPanel";
+import type { TripSelection } from "./components/DirectionsPanel";
+import { BuildingUpdates } from "./components/BuildingUpdates";
+import { LiveWarnings } from "./components/LiveWarnings";
+import { RouteUpdateNotice } from "./components/RouteUpdateNotice";
+import { useBuildingFeed } from "./hooks/useBuildingFeed";
+import type { PlannedTrip, FeedEvent } from "./hooks/useBuildingFeed";
+import "./live-warnings.css";
 
 const BuildingScene = lazy(() => import("./components/BuildingScene"));
 const VoiceOrb = lazy(() => import("./components/VoiceOrb"));
 const ShaderSurface = lazy(() => import("./components/ShaderSurface"));
-const defaultId = "proc-factory-dev-003";
+const emptyTrip: TripSelection = { start: "", destination: "", via: [] };
+const defaultId =
+  new URLSearchParams(window.location.search).get("building") ||
+  "proc-factory-dev-003";
 const time = () =>
   new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 const welcome = (): ChatMessage => ({
@@ -105,6 +121,10 @@ export default function App() {
   const [catalog, setCatalog] = useState<BuildingSummary[]>(presets),
     [server, setServer] = useState(false),
     [voiceAvailable, setVoiceAvailable] = useState(false);
+  const [voiceFeatures, setVoiceFeatures] = useState({
+    streaming: false,
+    realtime: false,
+  });
   const [data, setData] = useState<BuildingData | null>(null),
     [buildingId, setBuildingId] = useState(defaultId),
     [floorId, setFloorId] = useState(""),
@@ -135,7 +155,7 @@ export default function App() {
       window.removeEventListener("keydown", escape);
     };
   }, [expandedMap]);
-  const [view, setView] = useState<"2d" | "3d">("3d"),
+  const [view, setView] = useState<"2d" | "3d">("2d"),
     [preview, setPreview] = useState(false),
     [activeStep, setActiveStep] = useState(0);
   const [directoryMode, setDirectoryMode] = useState<"rooms" | "objects">(
@@ -158,6 +178,14 @@ export default function App() {
     loadVersion = useRef(0),
     requestAbort = useRef<AbortController | null>(null),
     busyRef = useRef(false);
+  const [trip, setTrip] = useState<TripSelection>(emptyTrip),
+    [tripError, setTripError] = useState(""),
+    [assistantOpen, setAssistantOpen] = useState(false);
+  const tripClear = useRef<Promise<unknown>>(Promise.resolve());
+  const plannedTrip = useRef<PlannedTrip | null>(null);
+  const appliedRevision = useRef(0);
+  const [warningsOpen, setWarningsOpen] = useState(false),
+    [routeUpdate, setRouteUpdate] = useState<RouteUpdateAction | null>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
   const canChat = server && liveData && !loading;
 
@@ -168,11 +196,23 @@ export default function App() {
     setBusy(false);
     setData(building);
     setBuildingId(building.building.id);
+    const url = new URL(window.location.href);
+    url.searchParams.set("building", building.building.id);
+    window.history.replaceState(null, "", url);
     setLiveData(live);
     setFloorId(
       (building.floors.find((f) => f.level === 0) ?? building.floors[0]).id,
     );
-    setMapState(emptyMapState);
+    setMapState({
+      ...emptyMapState,
+      closed:
+        (building.building.closed_element_ids as string[] | undefined) ?? [],
+    });
+    setTrip(emptyTrip);
+    plannedTrip.current = null;
+    appliedRevision.current = Number(building.building.revision ?? 0);
+    setRouteUpdate(null);
+    setTripError("");
     setLocation(null);
     setSelection(null);
     setPreview(false);
@@ -240,6 +280,10 @@ export default function App() {
       ]);
       setCatalog(buildings);
       setServer(true);
+      setVoiceFeatures({
+        streaming: !!status?.streaming,
+        realtime: !!status?.realtime,
+      });
       setVoiceAvailable(
         !!status?.configured &&
           !!status?.speech_to_text &&
@@ -273,6 +317,273 @@ export default function App() {
       block: "nearest",
     });
   }, [messages, busy]);
+
+  const receiveActions = useCallback((actions: ChatAction[]) => {
+    const snapshot = actions.find((a) => a.type === "building_state");
+    if (snapshot?.type === "building_state") {
+      const revision = Number(snapshot.building.building.revision ?? 0);
+      if (revision < appliedRevision.current) return;
+      appliedRevision.current = revision;
+    }
+    setMapState((previous) => applyMapActions(previous, actions));
+    for (const action of actions) {
+      if (action.type === "building_state")
+        setData((previous) =>
+          Number(previous?.building.revision ?? 0) ===
+          Number(action.building.building.revision ?? 0)
+            ? previous
+            : action.geometry_changed === false && previous
+              ? { ...previous, building: action.building.building }
+              : parseBuilding(action.building),
+        );
+      if (action.type === "route_update") setRouteUpdate(action);
+      if (action.type === "route") {
+        if (action.start_space_id && action.destination_space_id)
+          plannedTrip.current = {
+            start: action.start_space_id,
+            destination: action.destination_space_id,
+            via: action.via_space_ids ?? [],
+            step_free: action.step_free ?? false,
+          };
+        if (action.start_space_id && action.destination_space_id)
+          setTrip({
+            start: action.start_space_id,
+            destination: action.destination_space_id,
+            via: action.via_space_ids ?? [],
+          });
+        if (action.step_free !== undefined) setStepFree(action.step_free);
+        setTripError(action.geometry_notice ?? "");
+        setPreview(false);
+        setActiveStep(0);
+      }
+      if (action.type === "route_unavailable") {
+        setTripError(action.reason);
+        setPreview(false);
+        setActiveStep(0);
+      }
+    }
+  }, []);
+  const requestTrip = useCallback(
+    async (selection: TripSelection, accessible: boolean) => {
+      if (
+        !canChat ||
+        busyRef.current ||
+        !selection.start ||
+        !selection.destination ||
+        selection.via.some((v) => !v)
+      )
+        return;
+      const current = session.current,
+        controller = new AbortController();
+      requestAbort.current = controller;
+      busyRef.current = true;
+      setBusy(true);
+      setTripError("");
+      setRouteUpdate(null);
+      plannedTrip.current = { ...selection, step_free: accessible };
+      setNotice("");
+      setMapState((previous) => ({
+        ...previous,
+        route: null,
+        previousRoute: null,
+        comparePrevious: false,
+      }));
+      try {
+        await tripClear.current;
+        if (controller.signal.aborted || current !== session.current) return;
+        const response = await request<Pick<ChatResponse, "actions" | "reply">>(
+          `/buildings/${encodeURIComponent(buildingId)}/route`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              session_id: current,
+              ...selection,
+              step_free: accessible,
+            }),
+            signal: controller.signal,
+          },
+        );
+        if (session.current !== current) return;
+        receiveActions(response.actions);
+        setSelection(null);
+        const start = data?.spaces.find((s) => s.id === selection.start);
+        if (start) setFloorId(start.floor_id);
+      } catch (error) {
+        if (!controller.signal.aborted && session.current === current)
+          setTripError(
+            error instanceof Error
+              ? error.message
+              : "Unable to find this route.",
+          );
+      } finally {
+        if (session.current === current) {
+          busyRef.current = false;
+          setBusy(false);
+        }
+      }
+    },
+    [canChat, buildingId, data, receiveActions],
+  );
+  const editBuilding = async (edit: Record<string, unknown>) => {
+    if (!canChat || busyRef.current) return false;
+    const current = session.current,
+      controller = new AbortController();
+    requestAbort.current = controller;
+    busyRef.current = true;
+    setBusy(true);
+    setTripError("");
+    try {
+      const response = await request<Pick<ChatResponse, "actions" | "reply">>(
+        `/buildings/${encodeURIComponent(buildingId)}/changes`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: current, ...edit }),
+          signal: controller.signal,
+        },
+      );
+      if (current !== session.current) return false;
+      receiveActions(response.actions);
+      setNotice(response.reply);
+      return true;
+    } catch (error) {
+      if (!controller.signal.aborted && current === session.current)
+        setTripError(
+          error instanceof Error
+            ? error.message
+            : "Unable to save this change.",
+        );
+      return false;
+    } finally {
+      if (current === session.current) {
+        busyRef.current = false;
+        setBusy(false);
+      }
+    }
+  };
+  const forgetTrip = () => {
+    plannedTrip.current = null;
+    setRouteUpdate(null);
+    setMapState((s) => ({ ...s, previousRoute: null, comparePrevious: false }));
+    if (canChat)
+      tripClear.current = request(
+        `/buildings/${encodeURIComponent(buildingId)}/trip/${encodeURIComponent(session.current)}`,
+        { method: "DELETE" },
+      ).catch(() =>
+        setNotice(
+          "The map is cleared. Reconnect to clear the agent’s saved trip.",
+        ),
+      );
+  };
+  const changeTrip = (next: TripSelection) => {
+    setTrip(next);
+    setTripError("");
+    if (mapState.route || plannedTrip.current) {
+      setPreview(false);
+      setMapState((s) => ({ ...s, route: null }));
+      forgetTrip();
+    }
+  };
+  const clearDirections = () => {
+    setTrip(emptyTrip);
+    plannedTrip.current = null;
+    setRouteUpdate(null);
+    setTripError("");
+    setPreview(false);
+    setMapState((s) => ({ ...s, route: null }));
+    forgetTrip();
+  };
+  const revision = Number(data?.building.revision ?? 0);
+  const receiveFeedEvent = useCallback((event: FeedEvent) => {
+    setMapState((previous) => {
+      if (previous.route?.element_ids?.some((id) => event.closed.includes(id)))
+        return {
+          ...previous,
+          previousRoute: previous.route,
+          route: null,
+          comparePrevious: false,
+        };
+      return previous;
+    });
+  }, []);
+  const feedStatus = useBuildingFeed({
+    buildingId,
+    enabled: canChat,
+    revision,
+    appliedRevision,
+    session,
+    busy: busyRef,
+    setBusy,
+    trip: plannedTrip,
+    onActions: receiveActions,
+    onEvent: receiveFeedEvent,
+    onError: setNotice,
+  });
+  const warningMutation = async (
+    path: string,
+    body: Record<string, unknown>,
+  ) => {
+    if (!canChat || busyRef.current) return false;
+    const current = session.current,
+      controller = new AbortController();
+    requestAbort.current = controller;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      const response = await request<Pick<ChatResponse, "actions" | "reply">>(
+        `/buildings/${encodeURIComponent(buildingId)}${path}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: current,
+            ...body,
+            planned_trip: plannedTrip.current
+              ? { session_id: current, ...plannedTrip.current }
+              : null,
+          }),
+          signal: controller.signal,
+        },
+      );
+      if (current !== session.current) return false;
+      receiveActions(response.actions);
+      setNotice(response.reply);
+      return true;
+    } catch (error) {
+      if (!controller.signal.aborted && current === session.current)
+        setNotice(
+          error instanceof Error
+            ? error.message
+            : "Could not save this report.",
+        );
+      return false;
+    } finally {
+      if (current === session.current) {
+        busyRef.current = false;
+        setBusy(false);
+      }
+    }
+  };
+  const locateWarning = (id: string) => {
+    if (!data) return;
+    const connector = data.vertical_connectors?.find((c) => c.id === id);
+    const space =
+      data.spaces.find((s) => s.id === id) ||
+      data.spaces.find(
+        (s) => connector?.space_ids.includes(s.id) && s.floor_id === floorId,
+      ) ||
+      data.spaces.find((s) => connector?.space_ids.includes(s.id));
+    const door = data.openings?.find((d) => d.id === id);
+    if (space) {
+      setFloorId(space.floor_id);
+      setSelection({ kind: "space", id: space.id });
+    } else if (door) {
+      setFloorId(door.floor_id);
+      setSelection({ kind: "opening", id: door.id });
+    }
+    setView("2d");
+  };
 
   const send = useCallback(
     async (text: string, displayText = text): Promise<string | null> => {
@@ -324,7 +635,7 @@ export default function App() {
             timestamp: time(),
           },
         ]);
-        setMapState((prev) => applyMapActions(prev, response.actions));
+        receiveActions(response.actions);
         setUnderstood(response.understood ?? "");
         setClarification(response.needs_clarification);
         if (
@@ -377,10 +688,13 @@ export default function App() {
         }
       }
     },
-    [buildingId, canChat, data, connect],
+    [buildingId, canChat, data, connect, receiveActions],
   );
 
-  const voice = useVoice(buildingId, send, setNotice);
+  const voice = useVoice(buildingId, send, setNotice, {
+    ...voiceFeatures,
+    onInterrupt: () => requestAbort.current?.abort(),
+  });
   const submitText = async (text: string, displayText = text) => {
     if (voice.active) voice.stop();
     const reply = await send(text, displayText);
@@ -512,38 +826,57 @@ export default function App() {
       floorId: space.floor_id,
       position: interiorPoint(space.polygon),
     });
+    setTrip((previous) => ({ ...previous, start: space.id }));
     if (canChat)
       void submitText(
-        `I am currently in ${label(space)} (space id ${space.id}). ${stepFree ? "I need step-free routes." : ""}`,
+        `I am currently in ${label(space)} (space id ${space.id}). ${stepFree ? "I need step-free routes." : ""} ${route ? "Replan my current trip from here, preserving the destination, visit order and accessibility requirements." : ""}`,
         `I’m in ${label(space)}.${stepFree ? " I need step-free routes." : ""}`,
       );
   };
   const goTo = (space: Space) => {
-    if (!currentLocation) {
-      setNotice("Choose your starting room, then select “I’m here”.");
-      return;
-    }
-    void submitText(
-      `Route from ${label(currentLocation)} (space id ${currentLocation.id}) to ${label(space)} (space id ${space.id})${stepFree ? ", step-free with no stairs" : ""}.`,
-      `Take me from ${label(currentLocation)} to ${label(space)}${stepFree ? ", using a step-free route" : ""}.`,
+    const next = {
+      ...trip,
+      start: trip.start || currentLocation?.id || "",
+      destination: space.id,
+    };
+    setTrip(next);
+    setSidebar(true);
+    if (next.start) void requestTrip(next, stepFree);
+    else setTripError("Choose a starting place to get directions.");
+  };
+  const created = async (value: BuildingData, warnings: string[]) => {
+    const building = parseBuilding(value);
+    const version = ++loadVersion.current;
+    voice.stop();
+    setLoading(false);
+    await connect();
+    if (version !== loadVersion.current) return;
+    reset(building, true);
+    setPanel(null);
+    setNotice(
+      (building.building.source === "floor-plan draft"
+        ? "Draft building created and connected. Review the inferred rooms and doors. "
+        : "Building connected. Chat, voice and routing are ready. ") +
+        warnings.slice(0, 3).join(" "),
     );
   };
   const upload = async (file: File) => {
     try {
       if (file.size > 20 * 1024 * 1024)
-        throw new Error("Choose a building JSON smaller than 20 MB.");
-      const building = parseBuilding(JSON.parse(await file.text()));
-      ++loadVersion.current;
-      voice.stop();
-      setLoading(false);
-      reset(building, false);
-      setPanel(null);
-      setNotice(
-        "Map imported. Both views use your file’s geometry. Register the building on the agent server to enable questions.",
-      );
+        throw Error("Choose a JSON file under 20 MB.");
+      parseBuilding(JSON.parse(await file.text()));
+      const form = new FormData();
+      form.append("file", file);
+      const result = await request<{
+        building: BuildingData;
+        warnings: string[];
+      }>("/buildings/import", { method: "POST", body: form });
+      await created(result.building, result.warnings);
     } catch (error) {
       setNotice(
-        error instanceof Error ? error.message : "This file could not be read.",
+        error instanceof Error
+          ? error.message
+          : "Could not import this building.",
       );
     }
   };
@@ -570,9 +903,16 @@ export default function App() {
           setSelection(null);
           setLayers((l) => (l.route ? l : { ...l, route: true }));
         }}
-        onClear={() => setMapState((s) => ({ ...s, route: null }))}
+        onClear={clearDirections}
+        onWalkView={() => {
+          setView("3d");
+          setExpandedMap(true);
+        }}
       >
-        <div className="app-shell" data-motion={animateEffects ? "on" : "off"}>
+        <div
+          className={`app-shell inside-maps ${assistantOpen ? "assistant-open" : ""}`}
+          data-motion={animateEffects ? "on" : "off"}
+        >
           <div className="ambient-wash" aria-hidden="true">
             <Suspense fallback={null}>
               <ShaderSurface enabled={animateEffects} />
@@ -638,17 +978,6 @@ export default function App() {
               aria-label="Building, room and object directory"
               inert={expandedMap}
             >
-              <div className="sidebar-intro">
-                <span className="eyebrow">YOUR SURROUNDINGS</span>
-                <h1>
-                  Find your way<span>.</span>
-                </h1>
-                <p>
-                  Every space has a story.
-                  <br />
-                  Let’s make this one familiar.
-                </p>
-              </div>
               <div className="building-picker-wrap">
                 <button
                   className="building-picker"
@@ -718,160 +1047,222 @@ export default function App() {
                   )}
                 </AnimatePresence>
               </div>
-              <div className="directory-heading">
-                <span className="eyebrow">THE DIRECTORY</span>
-                <span>{directoryCount}</span>
-              </div>
-              <div
-                className="directory-tabs"
-                role="group"
-                aria-label="Directory type"
-              >
-                <button
-                  aria-pressed={directoryMode === "rooms"}
-                  onClick={() => {
-                    setDirectoryMode("rooms");
-                    setDirectoryQuery("");
+              {data && (
+                <DirectionsPanel
+                  data={data}
+                  trip={trip}
+                  onChange={changeTrip}
+                  stepFree={stepFree}
+                  onStepFree={(value) => {
+                    setStepFree(value);
+                    if (route || plannedTrip.current)
+                      void requestTrip(trip, value);
                   }}
-                >
-                  {directoryMode === "rooms" && (
-                    <motion.span
-                      className="tab-indicator"
-                      layoutId="directory-tab"
-                      transition={{
-                        type: "spring",
-                        stiffness: 420,
-                        damping: 36,
-                      }}
-                    />
-                  )}
-                  <Map size={14} /> Rooms
-                </button>
-                <button
-                  aria-pressed={directoryMode === "objects"}
-                  onClick={() => {
-                    setDirectoryMode("objects");
-                    setDirectoryQuery("");
-                  }}
-                >
-                  {directoryMode === "objects" && (
-                    <motion.span
-                      className="tab-indicator"
-                      layoutId="directory-tab"
-                      transition={{
-                        type: "spring",
-                        stiffness: 420,
-                        damping: 36,
-                      }}
-                    />
-                  )}
-                  <Box size={14} /> Objects
-                </button>
-              </div>
-              <div className="search-field directory-search">
-                <Search size={16} />
-                <input
-                  aria-label={
-                    directoryMode === "rooms"
-                      ? "Search rooms across all floors"
-                      : "Search objects across all floors"
+                  onRoute={() => void requestTrip(trip, stepFree)}
+                  onClear={clearDirections}
+                  busy={busy || voice.active}
+                  connected={canChat}
+                  route={route}
+                  current={currentLocation?.id ?? null}
+                  onUseCurrent={() =>
+                    currentLocation &&
+                    changeTrip({ ...trip, start: currentLocation.id })
                   }
-                  placeholder={
-                    directoryMode === "rooms"
-                      ? "A room, a place, a purpose…"
-                      : "A desk, a machine, a chair…"
-                  }
-                  value={directoryQuery}
-                  onChange={(e) => setDirectoryQuery(e.target.value)}
+                  error={tripError}
                 />
-                {directoryQuery && (
-                  <button
-                    aria-label="Clear directory search"
-                    onClick={() => setDirectoryQuery("")}
-                  >
-                    <X size={13} />
-                  </button>
-                )}
-              </div>
-              {directoryMode === "objects" && (
-                <div className="object-directory-filter">
-                  <select
-                    aria-label="Object category"
-                    value={assetFilter}
-                    onChange={(e) => setAssetFilter(e.target.value)}
-                  >
-                    <option value="all">All object types</option>
-                    {assetCategories.map((c) => (
-                      <option key={c} value={c}>
-                        {c.charAt(0).toUpperCase() + c.slice(1)}
-                      </option>
-                    ))}
-                  </select>
-                  <span>{directoryQuery ? "All floors" : floor?.name}</span>
-                </div>
               )}
-              <div className="directory-list">
-                {directoryMode === "objects" &&
-                  objectResults.slice(0, 100).map((asset) => (
-                    <button
-                      className={`directory-item object-item ${selection?.id === asset.id ? "selected" : ""}`}
-                      key={asset.id}
-                      onClick={() => selectAsset(asset)}
-                    >
-                      <span className="object-list-icon">
-                        <Box size={16} />
-                      </span>
-                      <span>
-                        <strong>{asset.name}</strong>
-                        <small>
-                          {asset.type?.replaceAll("_", " ") || "Unclassified"} ·{" "}
-                          {data?.spaces.find((s) => s.id === asset.space_id)
-                            ?.name || "Room unspecified"}
-                        </small>
-                      </span>
-                      <ChevronRight size={13} />
-                    </button>
-                  ))}
-                {directoryMode === "rooms" &&
-                  results.slice(0, 100).map((space) => (
-                    <button
-                      className={`directory-item ${selection?.id === space.id ? "selected" : ""}`}
-                      key={space.id}
-                      onClick={() => selectSpace(space)}
-                    >
-                      <span
-                        className="room-dot"
-                        style={{ backgroundColor: palette(space).ink }}
+              {data && canChat && (
+                <LiveWarnings
+                  data={data}
+                  busy={busy || voice.active}
+                  status={feedStatus}
+                  selected={selectedAsset?.space_id ?? selection?.id ?? ""}
+                  open={warningsOpen}
+                  setOpen={setWarningsOpen}
+                  onPost={(body) => warningMutation("/warnings", body)}
+                  onResolve={(id) =>
+                    warningMutation(
+                      `/warnings/${encodeURIComponent(id)}/resolve`,
+                      {},
+                    )
+                  }
+                  onLocate={locateWarning}
+                />
+              )}
+              {data && canChat && (
+                <BuildingUpdates
+                  data={data}
+                  closed={mapState.closed}
+                  changes={
+                    (data.building.changes as BuildingChange[] | undefined) ??
+                    []
+                  }
+                  busy={busy || voice.active}
+                  onEdit={editBuilding}
+                />
+              )}
+              <details className="explore-directory">
+                <summary>
+                  <Search size={16} />
+                  Explore rooms & objects<span>{directoryCount}</span>
+                </summary>
+                <div className="directory-heading">
+                  <span className="eyebrow">THE DIRECTORY</span>
+                  <span>{directoryCount}</span>
+                </div>
+                <div
+                  className="directory-tabs"
+                  role="group"
+                  aria-label="Directory type"
+                >
+                  <button
+                    aria-pressed={directoryMode === "rooms"}
+                    onClick={() => {
+                      setDirectoryMode("rooms");
+                      setDirectoryQuery("");
+                    }}
+                  >
+                    {directoryMode === "rooms" && (
+                      <motion.span
+                        className="tab-indicator"
+                        layoutId="directory-tab"
+                        transition={{
+                          type: "spring",
+                          stiffness: 420,
+                          damping: 36,
+                        }}
                       />
-                      <span>
-                        <strong>{label(space)}</strong>
-                        <small>
-                          {category(space)}
-                          {directoryQuery
-                            ? ` · ${data?.floors.find((f) => f.id === space.floor_id)?.name}`
-                            : ""}
-                        </small>
-                      </span>
-                      {displayedClosures.has(space.id) ? (
-                        <span className="closed-tag">Closed</span>
-                      ) : (
-                        <ChevronRight size={13} />
-                      )}
+                    )}
+                    <Map size={14} /> Rooms
+                  </button>
+                  <button
+                    aria-pressed={directoryMode === "objects"}
+                    onClick={() => {
+                      setDirectoryMode("objects");
+                      setDirectoryQuery("");
+                    }}
+                  >
+                    {directoryMode === "objects" && (
+                      <motion.span
+                        className="tab-indicator"
+                        layoutId="directory-tab"
+                        transition={{
+                          type: "spring",
+                          stiffness: 420,
+                          damping: 36,
+                        }}
+                      />
+                    )}
+                    <Box size={14} /> Objects
+                  </button>
+                </div>
+                <div className="search-field directory-search">
+                  <Search size={16} />
+                  <input
+                    aria-label={
+                      directoryMode === "rooms"
+                        ? "Search rooms across all floors"
+                        : "Search objects across all floors"
+                    }
+                    placeholder={
+                      directoryMode === "rooms"
+                        ? "A room, a place, a purpose…"
+                        : "A desk, a machine, a chair…"
+                    }
+                    value={directoryQuery}
+                    onChange={(e) => setDirectoryQuery(e.target.value)}
+                  />
+                  {directoryQuery && (
+                    <button
+                      aria-label="Clear directory search"
+                      onClick={() => setDirectoryQuery("")}
+                    >
+                      <X size={13} />
                     </button>
-                  ))}
-                {!directoryCount && (
-                  <p className="empty-note">
-                    No {directoryMode} match this search.
-                    <br />
-                    Try a name or type.
-                  </p>
+                  )}
+                </div>
+                {directoryMode === "objects" && (
+                  <div className="object-directory-filter">
+                    <select
+                      aria-label="Object category"
+                      value={assetFilter}
+                      onChange={(e) => setAssetFilter(e.target.value)}
+                    >
+                      <option value="all">All object types</option>
+                      {assetCategories.map((c) => (
+                        <option key={c} value={c}>
+                          {c.charAt(0).toUpperCase() + c.slice(1)}
+                        </option>
+                      ))}
+                    </select>
+                    <span>{directoryQuery ? "All floors" : floor?.name}</span>
+                  </div>
                 )}
-                {directoryCount > 100 && (
-                  <p className="empty-note">
-                    Showing 100 of {directoryCount}. Search to narrow the list.
-                  </p>
-                )}
-              </div>
+                <div className="directory-list">
+                  {directoryMode === "objects" &&
+                    objectResults.slice(0, 100).map((asset) => (
+                      <button
+                        className={`directory-item object-item ${selection?.id === asset.id ? "selected" : ""}`}
+                        key={asset.id}
+                        onClick={() => selectAsset(asset)}
+                      >
+                        <span className="object-list-icon">
+                          <Box size={16} />
+                        </span>
+                        <span>
+                          <strong>{asset.name}</strong>
+                          <small>
+                            {asset.type?.replaceAll("_", " ") || "Unclassified"}{" "}
+                            ·{" "}
+                            {data?.spaces.find((s) => s.id === asset.space_id)
+                              ?.name || "Room unspecified"}
+                          </small>
+                        </span>
+                        <ChevronRight size={13} />
+                      </button>
+                    ))}
+                  {directoryMode === "rooms" &&
+                    results.slice(0, 100).map((space) => (
+                      <button
+                        className={`directory-item ${selection?.id === space.id ? "selected" : ""}`}
+                        key={space.id}
+                        onClick={() => selectSpace(space)}
+                      >
+                        <span
+                          className="room-dot"
+                          style={{ backgroundColor: palette(space).ink }}
+                        />
+                        <span>
+                          <strong>{label(space)}</strong>
+                          <small>
+                            {category(space)}
+                            {directoryQuery
+                              ? ` · ${data?.floors.find((f) => f.id === space.floor_id)?.name}`
+                              : ""}
+                          </small>
+                        </span>
+                        {displayedClosures.has(space.id) ? (
+                          <span className="closed-tag">Closed</span>
+                        ) : (
+                          <ChevronRight size={13} />
+                        )}
+                      </button>
+                    ))}
+                  {!directoryCount && (
+                    <p className="empty-note">
+                      No {directoryMode} match this search.
+                      <br />
+                      Try a name or type.
+                    </p>
+                  )}
+                  {directoryCount > 100 && (
+                    <p className="empty-note">
+                      Showing 100 of {directoryCount}. Search to narrow the
+                      list.
+                    </p>
+                  )}
+                </div>
+              </details>
               <div className="sidebar-bottom">
                 <button
                   className="import-link"
@@ -905,7 +1296,9 @@ export default function App() {
                   <div className="breadcrumb">
                     <button
                       onClick={() => setSidebar((v) => !v)}
-                      aria-label={sidebar ? "Hide directory" : "Show directory"}
+                      aria-label={
+                        sidebar ? "Hide directions" : "Show directions"
+                      }
                     >
                       {sidebar ? (
                         <PanelLeftClose size={16} />
@@ -913,7 +1306,7 @@ export default function App() {
                         <PanelLeftOpen size={16} />
                       )}
                     </button>
-                    <span>Explore</span>
+                    <span>Indoor map</span>
                     <ChevronRight size={11} />
                     <span>{floor?.name ?? "Your building"}</span>
                   </div>
@@ -922,7 +1315,7 @@ export default function App() {
                     <span className="heading-spark">✧</span>
                   </h2>
                   <p className="workspace-subtitle">
-                    A new perspective. A familiar way forward.
+                    Rooms, doorways and routes across every floor.
                   </p>
                 </div>
                 <div className="heading-details">
@@ -941,6 +1334,7 @@ export default function App() {
                   )}
                   <button
                     className="subtle-button"
+                    aria-label="About this place"
                     onClick={() => setPanel("source")}
                   >
                     <Info size={16} />
@@ -948,6 +1342,19 @@ export default function App() {
                   </button>
                 </div>
               </div>
+              <button
+                className="assistant-launcher"
+                aria-expanded={assistantOpen}
+                aria-controls="building-assistant"
+                onClick={() => {
+                  if (assistantOpen) voice.stop();
+                  setAssistantOpen((v) => !v);
+                }}
+              >
+                <Mic size={17} />
+                {assistantOpen ? "Close assistant" : "Ask Inside"}
+                <span>Voice & chat</span>
+              </button>
               <div className="explorer-grid">
                 <section
                   id="building-explorer"
@@ -1018,6 +1425,25 @@ export default function App() {
                     </div>
                   </div>
                   <div className="map-body">
+                    <RouteUpdateNotice
+                      update={routeUpdate}
+                      onClose={() => setRouteUpdate(null)}
+                      compare={!!mapState.comparePrevious}
+                      onCompare={() => {
+                        setView("2d");
+                        setMapState((s) => ({
+                          ...s,
+                          comparePrevious: !s.comparePrevious,
+                        }));
+                      }}
+                      canCompare={
+                        !!mapState.previousRoute &&
+                        !!mapState.route &&
+                        JSON.stringify(mapState.previousRoute.segments) !==
+                          JSON.stringify(mapState.route.segments)
+                      }
+                    />
+
                     <div className="map-atmosphere" aria-hidden="true">
                       <Suspense fallback={null}>
                         <ShaderSurface kind="stage" enabled={animateEffects} />
@@ -1043,6 +1469,10 @@ export default function App() {
                             location={location}
                             avatar={avatar}
                             onSelect={setSelection}
+                            onWarning={() => {
+                              setWarningsOpen(true);
+                              setSidebar(true);
+                            }}
                           />
                         ) : (
                           <BuildingScene
@@ -1072,6 +1502,7 @@ export default function App() {
                       </Suspense>
                     )}
                     <RoutePlayer avatar={avatar} />
+                    <FloorTransferOverlay />
                     {loading && (
                       <div className="map-loading">
                         <LoaderCircle className="spin" />
@@ -1375,7 +1806,9 @@ export default function App() {
                   </div>
                 </section>
                 <aside
+                  id="building-assistant"
                   className="assistant-card"
+                  hidden={!assistantOpen}
                   data-phase={phase}
                   inert={expandedMap}
                   aria-label="Your building assistant"
@@ -1385,6 +1818,16 @@ export default function App() {
                       <Sparkles size={16} />
                       YOUR BUILDING GUIDE
                     </span>
+                    <button
+                      className="icon-button"
+                      aria-label="Close assistant"
+                      onClick={() => {
+                        voice.stop();
+                        setAssistantOpen(false);
+                      }}
+                    >
+                      <X size={17} />
+                    </button>
                     <button
                       className="icon-button"
                       aria-label={
@@ -1407,6 +1850,11 @@ export default function App() {
                     </button>
                   </div>
                   <div className="voice-stage">
+                    {voice.transcript && (
+                      <p className="live-transcript" aria-live="polite">
+                        {voice.transcript}
+                      </p>
+                    )}
                     <div className="voice-art">
                       <div className="voice-shader-halo">
                         <Suspense fallback={null}>
@@ -1480,7 +1928,7 @@ export default function App() {
                     )}
                     <span className="voice-caption">
                       {voiceAvailable && canChat
-                        ? "YOUR AGENT · ELEVENLABS VOICE"
+                        ? `YOUR AGENT · ${voice.active ? (voice.transport === "realtime" ? "LIVE VOICE" : "TURN-BY-TURN VOICE") : "ELEVENLABS VOICE"}`
                         : canChat
                           ? "Voice service unavailable · text is ready"
                           : "Connect the agent to start a conversation"}
@@ -1656,9 +2104,7 @@ export default function App() {
                   >
                     <div className="route-heading">
                       <div>
-                        <span className="eyebrow">
-                          YOUR NEXT LITTLE JOURNEY
-                        </span>
+                        <span className="eyebrow">YOUR ROUTE</span>
                         <h3>
                           {route.length_m.toLocaleString(undefined, {
                             maximumFractionDigits: 1,
@@ -1767,7 +2213,7 @@ export default function App() {
             avatar={avatar}
             setAvatar={setAvatar}
             upload={upload}
-            notify={setNotice}
+            onCreated={created}
             notice={notice}
           />
         </div>

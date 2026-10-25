@@ -27,7 +27,7 @@ export interface Floor {
 export interface Space {
   id: string;
   floor_id: string;
-  type: 'room' | 'corridor' | 'stair' | 'lift' | 'hall' | 'outdoor' | string;
+  type: "room" | "corridor" | "stair" | "lift" | "hall" | "outdoor" | string;
   room_type?: string;
   name: string;
   ref: string;
@@ -39,7 +39,7 @@ export interface Opening {
   id: string;
   floor_id: string;
   space_ids: string[];
-  kind: 'door' | 'opening' | 'entrance' | string;
+  kind: "door" | "opening" | "entrance" | string;
   position: [number, number];
   name?: string;
   width_m?: number;
@@ -50,7 +50,7 @@ export interface Opening {
 export interface VerticalConnector {
   synthetic?: boolean;
   id: string;
-  kind: 'stairs' | 'lift' | string;
+  kind: "stairs" | "lift" | string;
   name: string;
   floor_ids: string[];
   space_ids: string[];
@@ -78,7 +78,7 @@ export interface Asset {
 
 export function parseFootprint(fp: unknown): AssetFootprint | null {
   if (!fp) return null;
-  if (typeof fp === 'object' && fp !== null && 'width_m' in fp) {
+  if (typeof fp === "object" && fp !== null && "width_m" in fp) {
     const o = fp as { width_m: number; depth_m: number; rotation_deg?: number };
     return {
       width_m: Number(o.width_m) || 1,
@@ -98,34 +98,92 @@ export function parseFootprint(fp: unknown): AssetFootprint | null {
 
 // Route & Chat Types (Section 4.3 Contract)
 export interface RouteAction {
-  type: 'route';
+  type: "route";
+  start_space_id?: string;
+  destination_space_id?: string;
+  via_space_ids?: string[];
+  step_free?: boolean;
+  geometry_valid?: boolean;
+  element_ids?: string[];
+  geometry_notice?: string;
+  distance_note?: string;
   length_m: number;
   steps: string[];
   floors: Record<string, [number, number][]>;
+  segments?: {
+    floor_id: string;
+    points: [number, number][];
+    exit_connector_id?: string;
+  }[];
 }
 
 export interface HighlightAction {
-  type: 'highlight';
+  type: "highlight";
   space_ids?: string[];
   asset_ids?: string[];
 }
 
 export interface ClosedAction {
-  type: 'closed';
+  type: "closed";
   element_ids: string[];
 }
 
 export interface DoorAddedAction {
-  type: 'door_added';
+  type: "door_added";
   opening: Opening;
 }
 
 export interface BuildingCreatedAction {
-  type: 'building_created';
+  type: "building_created";
   building_id: string;
 }
 
+export interface BuildingChange {
+  id: string;
+  kind: "closure" | "door_added" | "warning";
+  status?: "active" | "resolved";
+  element_id: string;
+  label: string;
+  at: string;
+  closed?: boolean;
+}
+export interface BuildingStateAction {
+  type: "building_state";
+  preserve_route?: boolean;
+  geometry_changed?: boolean;
+  building: BuildingData;
+}
+export interface RouteUnavailableAction {
+  type: "route_unavailable";
+  reason: string;
+}
+
+export interface LiveWarning {
+  id: string;
+  element_id: string;
+  label: string;
+  kind: "lift_outage" | "blocked_access" | "hazard" | "other";
+  message: string;
+  reporter: string;
+  blocks_route: boolean;
+  status: "active" | "resolved";
+  created_at: string;
+  updated_at: string;
+  revision: number;
+}
+export interface RouteUpdateAction {
+  type: "route_update";
+  changed: boolean;
+  title: string;
+  message: string;
+  previous_length_m: number | null;
+  new_length_m: number | null;
+  warning_ids: string[];
+}
 export type ChatAction =
+  | RouteUpdateAction
+  | BuildingStateAction
+  | RouteUnavailableAction
   | RouteAction
   | HighlightAction
   | ClosedAction
@@ -141,7 +199,7 @@ export interface ChatResponse {
 
 export interface ChatMessage {
   id: string;
-  sender: 'user' | 'agent';
+  sender: "user" | "agent";
   text: string;
   timestamp: string;
   response?: ChatResponse;

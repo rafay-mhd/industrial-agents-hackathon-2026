@@ -12,7 +12,7 @@ import {
   routeOnFloor,
   visibleClosures,
 } from "./model";
-import { fitCameraDistance, easeCamera } from "./sceneMath";
+import { fitCameraDistance, easeCamera, easeZoom } from "./sceneMath";
 import type { Vec3 } from "./sceneMath";
 import type { BuildingData, Opening, Space } from "../types";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
@@ -25,6 +25,7 @@ import { createConnectorScene } from "./connectorScene";
 import { wallCoverage } from "./wallCoverage";
 import type { PlaybackStore } from "./routePlayback";
 import { createRouteActor } from "./routeActor";
+import { createFootsteps } from "./footsteps";
 import { buildEnvelope, isOutdoor } from "./envelopeLayout";
 import { createExteriorScene } from "./exteriorScene";
 import { wallSegments } from "./model";
@@ -140,6 +141,8 @@ export function createBuildingWorld(
     navLeg = -1,
     wasFollowing = false;
   const actor = keep(createRouteActor());
+  const footsteps = keep(createFootsteps());
+  scene.add(footsteps.group);
   scene.add(actor.group);
   const transferLine = new THREE.Line(
     keep(new THREE.BufferGeometry()),
@@ -406,6 +409,7 @@ export function createBuildingWorld(
   let options: SceneOptions | null = null;
   let overlayResources: { dispose(): void }[] = [];
   let routeSegments: {
+    floorLeg: number;
     mesh: THREE.Mesh;
     floorId: string;
     start: number;
@@ -467,52 +471,57 @@ export function createBuildingWorld(
     if (o.layers.route)
       for (const floor of floors) {
         const group = groups.get(floor.id)!;
-        const points = routeOnFloor(o.state.route, floor);
-        const routeMaterial = save(
-          new THREE.MeshBasicMaterial({ color: "#223f91" }),
-        );
-        let travelled = 0;
-        for (let i = 1; i < points.length; i++) {
-          const a = worldPoint(points[i - 1], 0.28),
-            c = worldPoint(points[i], 0.28),
-            delta = c.clone().sub(a);
-          if (!delta.length()) continue;
-          const geom = save(
-            new THREE.CylinderGeometry(
-              Math.max(0.07, span * 0.0015),
-              Math.max(0.07, span * 0.0015),
-              delta.length(),
-              8,
-            ),
+        const paths = o.state.route?.segments
+          ?.filter((s) => s.floor_id === floor.id)
+          .map((s) => s.points) ?? [routeOnFloor(o.state.route, floor)];
+        for (const [pathIndex, points] of paths.entries()) {
+          const routeMaterial = save(
+            new THREE.MeshBasicMaterial({ color: "#223f91" }),
           );
-          const mesh = new THREE.Mesh(geom, routeMaterial);
-          mesh.position.copy(a).add(c).multiplyScalar(0.5);
-          mesh.quaternion.setFromUnitVectors(
-            new THREE.Vector3(0, 1, 0),
-            delta.normalize(),
-          );
-          group.overlays.add(mesh);
-          const progressMesh = new THREE.Mesh(
-            progressGeometry,
-            progressMaterial,
-          );
-          progressMesh.quaternion.copy(mesh.quaternion);
-          progressMesh.visible = false;
-          group.overlays.add(progressMesh);
-          const length = c.distanceTo(a);
-          routeSegments.push({
-            mesh: progressMesh,
-            floorId: floor.id,
-            start: travelled,
-            length,
-            a,
-            b: c,
-          });
-          travelled += length;
-        }
-        if (points.length) {
-          dot(points[0], floor.id, "#fff6df");
-          dot(points.at(-1)!, floor.id, "#b12c4a");
+          let travelled = 0;
+          for (let i = 1; i < points.length; i++) {
+            const a = worldPoint(points[i - 1], 0.28),
+              c = worldPoint(points[i], 0.28),
+              delta = c.clone().sub(a);
+            if (!delta.length()) continue;
+            const geom = save(
+              new THREE.CylinderGeometry(
+                Math.max(0.015, Math.min(0.035, span * 0.0002)),
+                Math.max(0.015, Math.min(0.035, span * 0.0002)),
+                delta.length(),
+                8,
+              ),
+            );
+            const mesh = new THREE.Mesh(geom, routeMaterial);
+            mesh.position.copy(a).add(c).multiplyScalar(0.5);
+            mesh.quaternion.setFromUnitVectors(
+              new THREE.Vector3(0, 1, 0),
+              delta.normalize(),
+            );
+            group.overlays.add(mesh);
+            const progressMesh = new THREE.Mesh(
+              progressGeometry,
+              progressMaterial,
+            );
+            progressMesh.quaternion.copy(mesh.quaternion);
+            progressMesh.visible = false;
+            group.overlays.add(progressMesh);
+            const length = c.distanceTo(a);
+            routeSegments.push({
+              mesh: progressMesh,
+              floorLeg: pathIndex,
+              floorId: floor.id,
+              start: travelled,
+              length,
+              a,
+              b: c,
+            });
+            travelled += length;
+          }
+          if (points.length) {
+            dot(points[0], floor.id, "#fff6df");
+            dot(points.at(-1)!, floor.id, "#b12c4a");
+          }
         }
       }
     if (o.location) dot(o.location.position, o.location.floorId, "#b62f4d");
@@ -526,12 +535,18 @@ export function createBuildingWorld(
     toTarget: THREE.Vector3;
     start: number;
     duration: number;
+    easing: (t: number) => number;
   } | null = null;
   let overview = true,
     width = 800,
     height = 600,
     hovered: string | null = null;
-  const fly = (to: THREE.Vector3, toTarget: THREE.Vector3, duration = 1000) => {
+  const fly = (
+    to: THREE.Vector3,
+    toTarget: THREE.Vector3,
+    duration = 1000,
+    easing = easeCamera,
+  ) => {
     // Flush the previous drag's damping so it cannot fight the camera animation.
     controls.enableDamping = false;
     controls.update();
@@ -543,6 +558,7 @@ export function createBuildingWorld(
       toTarget,
       start: performance.now(),
       duration: reduced.matches ? 0 : duration,
+      easing,
     };
   };
   const offset = (g: FloorGroup, mode: SceneMode) =>
@@ -794,7 +810,8 @@ export function createBuildingWorld(
     fly(
       target.clone().add(delta.normalize().multiplyScalar(distance)),
       target,
-      450,
+      200,
+      easeZoom,
     );
   };
   const observer = new ResizeObserver(([entry]) => {
@@ -932,7 +949,7 @@ export function createBuildingWorld(
     const delta =
       e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? height : 1);
     zoom(
-      Math.exp(THREE.MathUtils.clamp(delta * 0.0015, -0.5, 0.5)),
+      Math.exp(THREE.MathUtils.clamp(delta * 0.002, -0.3, 0.3)),
       hit ?? undefined,
     );
   };
@@ -1169,7 +1186,8 @@ export function createBuildingWorld(
           blend,
         );
         const wallScale =
-          options.mode === "building"
+          options.mode === "building" ||
+          (navigation?.getFrame().firstPerson && navigation.getFrame().follow)
             ? 1
             : Math.min(
                 options.selected?.kind === "asset" ? 0.28 : 0.7,
@@ -1201,6 +1219,23 @@ export function createBuildingWorld(
       for (const connection of connections)
         connection.group.visible = options.mode !== "building";
       const nav = navigation?.getFrame();
+      footsteps.group.visible =
+        !!nav?.active && options.layers.route && options.mode !== "building";
+      if (nav?.active)
+        footsteps.update(
+          nav,
+          (id) => {
+            const f = groups.get(id);
+            return f ? f.group.position.y - f.elevation : 0;
+          },
+          (id) => options!.mode !== "inside" || options!.floorId === id,
+        );
+      const eyeView = !!nav?.active && nav.follow && nav.firstPerson;
+      controls.enabled = !eyeView;
+      if (camera.fov !== (eyeView ? 65 : 36)) {
+        camera.fov = eyeView ? 65 : 36;
+        camera.updateProjectionMatrix();
+      }
       actor.group.visible = !!nav?.active && options.layers.route;
       transferLine.visible =
         !!nav?.active &&
@@ -1232,10 +1267,32 @@ export function createBuildingWorld(
         actor.group.position.copy(position).add(new THREE.Vector3(0, 0.32, 0));
         actor.setHeading(nav.heading);
         actor.group.visible =
+          !eyeView &&
           options.mode !== "building" &&
           (options.mode !== "inside" || options.floorId === nav.floorId);
         if (nav.follow) {
-          if (
+          if (eyeView) {
+            flight = null;
+            const standing =
+              leg.kind === "connector"
+                ? new THREE.Vector3(...leg.points[0])
+                : position.clone();
+            const eye = standing.add(new THREE.Vector3(0, 1.65, 0));
+            const target = eye
+              .clone()
+              .add(
+                new THREE.Vector3(
+                  Math.sin(nav.heading) * 3,
+                  -0.85,
+                  -Math.cos(nav.heading) * 3,
+                ),
+              );
+            const k = reduced.matches ? 1 : 1 - Math.exp(-dt * 10);
+            // Smoothing position cuts across corridor corners and through their walls.
+            camera.position.copy(eye);
+            controls.target.lerp(target, k);
+            camera.lookAt(controls.target);
+          } else if (
             nav.revision !== navRevision ||
             nav.legIndex !== navLeg ||
             !wasFollowing
@@ -1254,7 +1311,7 @@ export function createBuildingWorld(
             overview = false;
             frameBox(box, new THREE.Vector3(0.65, 1.4, 1).normalize(), 800);
           }
-          if (!flight && leg.kind === "walk") {
+          if (!eyeView && !flight && leg.kind === "walk") {
             const target = position.clone().add(new THREE.Vector3(0, 0.5, 0)),
               previous = controls.target.clone();
             controls.target.lerp(
@@ -1269,9 +1326,9 @@ export function createBuildingWorld(
         wasFollowing = nav.follow;
       } else wasFollowing = false;
       for (const segment of routeSegments) {
-        const leg = nav?.plan.legs.find(
+        const leg = nav?.plan.legs.filter(
           (l) => l.kind === "walk" && l.floorId === segment.floorId,
-        );
+        )[segment.floorLeg];
         const distance = leg ? Math.max(0, nav!.distance - leg.start) : 0,
           amount = Math.min(
             segment.length,
@@ -1291,13 +1348,13 @@ export function createBuildingWorld(
             flight.duration && !reduced.matches
               ? Math.min((now - flight.start) / flight.duration, 1)
               : 1,
-          k = easeCamera(t);
+          k = flight.easing(t);
         camera.position.lerpVectors(flight.from, flight.to, k);
         controls.target.lerpVectors(flight.fromTarget, flight.toTarget, k);
         if (t === 1) flight = null;
       }
       controls.autoRotate = options.orbit && !reduced.matches;
-      controls.update(dt);
+      if (!eyeView) controls.update(dt);
       renderer.render(scene, camera);
       if (now - labelTime > 40) {
         drawLabels();

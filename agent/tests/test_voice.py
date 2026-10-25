@@ -22,6 +22,29 @@ class VoiceProviderTests(unittest.TestCase):
     def provider(self, handler):
         return ElevenLabsVoice(api_key='unit-secret', transport=httpx.MockTransport(handler))
 
+    def test_exhausted_credits_are_not_reported_as_bad_credentials(self):
+        provider=self.provider(lambda r:httpx.Response(401,json={'detail':{'status':'quota_exceeded'}}))
+        for call in (lambda:provider.synthesize('Hello'),lambda:provider.open_speech_stream('Hello')):
+            with self.assertRaises(HTTPException) as caught:call()
+            self.assertEqual(caught.exception.status_code,429)
+            self.assertIn('credits are exhausted',caught.exception.detail)
+
+    def test_streaming_pcm_and_short_lived_tokens(self):
+        def handler(request):
+            if request.url.path.endswith('realtime_scribe'):
+                return httpx.Response(200,json={'token':'ephemeral-test-token'})
+            self.assertEqual(request.url.params['output_format'],'pcm_24000')
+            payload=json.loads(request.content)
+            self.assertEqual(payload['model_id'],'eleven_flash_v2_5')
+            self.assertEqual(payload['text'],'Turn left.')
+            return httpx.Response(200,content=b'\x00\x01'*4000)
+        provider=self.provider(handler)
+        self.assertEqual(provider.realtime_token(),'ephemeral-test-token')
+        self.assertEqual(len(b''.join(provider.open_speech_stream('**Turn left.**'))),8000)
+        for code in (401,429,500):
+            with self.assertRaises(HTTPException):
+                self.provider(lambda r:httpx.Response(code)).open_speech_stream('Hello')
+
     def test_stt_is_multipart_and_tts_uses_only_the_requested_text(self):
         requests = []
         def handle(request):
@@ -104,6 +127,20 @@ class VoiceAPITests(unittest.TestCase):
         self.app=create_app(ROOT/'data/dev',Path(self.temp.name),client_factory=Mock,voice_factory=lambda:self.voice)
         self.client=TestClient(self.app)
         self.addCleanup(self.client.close)
+
+    def test_streaming_endpoints_keep_main_key_server_side_and_validate_building(self):
+        self.voice.realtime_token.return_value='ephemeral-test-token'
+        self.voice.open_speech_stream.return_value=iter([b'\x00\x01',b'\x02\x03'])
+        response=self.client.post(f'/buildings/{FACTORY}/voice-token')
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(response.json()['token'],'ephemeral-test-token')
+        self.assertLessEqual(len(response.json()['keyterms']),50)
+        self.assertEqual(response.headers['cache-control'],'no-store')
+        self.assertEqual(self.client.post('/buildings/missing/voice-token').status_code,404)
+        self.voice.realtime_token.assert_called_once()
+        audio=self.client.post('/tts/stream',json={'text':'Turn left.'})
+        self.assertEqual(audio.content,b'\x00\x01\x02\x03')
+        self.assertEqual(audio.headers['x-audio-sample-rate'],'24000')
 
     def transcript(self,identifier=FACTORY,data=b'audio',mime='audio/webm'):
         return self.client.post(f'/buildings/{identifier}/transcribe',files={'file':('question',data,mime)})

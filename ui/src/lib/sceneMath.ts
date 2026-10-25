@@ -5,6 +5,12 @@ export function easeCamera(t: number) {
   return x < 0.5 ? 4 * x ** 3 : 1 - (-2 * x + 2) ** 3 / 2;
 }
 
+/** Respond immediately to scrolling, then settle without a long inertial tail. */
+export function easeZoom(t: number) {
+  const x = Math.max(0, Math.min(1, t));
+  return 1 - (1 - x) ** 3;
+}
+
 /** Fits every corner, accounting for portrait viewports and oblique cameras. */
 export function fitCameraDistance(
   size: Vec3,

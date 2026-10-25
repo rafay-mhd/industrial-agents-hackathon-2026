@@ -7,7 +7,7 @@ uv sync --frozen
 uv run --frozen --env-file .env uvicorn agent.server:app --host 127.0.0.1 --port 8000
 ```
 
-Use one worker: sessions and newly registered buildings live in process memory. Restarting resets them.
+Use one worker. Conversation sessions and planned trips live in memory; imported buildings and confirmed building changes persist under the output directory. Restarting clears conversations, not saved doors and outages.
 The fetched UI (`origin/ui` at `938cfa9`) targets `http://localhost:8000`; CORS allows
 `http://localhost:5173`. The API docs are at `/docs`. The model uses the same Sonnet default and
 optional `AGENT_MODEL` override as the benchmark agent. Credentials stay in the local ignored `.env`.
@@ -22,7 +22,7 @@ browser-to-API run with the teammate UI is still pending; HTTP and Core integrat
   supplied train/dev/test buildings are available, without reading question files or answer keys.
 - `GET /buildings/{id}`: raw original building JSON for rendering. Unknown IDs return 404.
 - `POST /buildings/{id}/chat`: `{session_id,message}` → `{reply,understood,needs_clarification,actions}`.
-  Blank inputs return 422. Reuse a session ID to continue; a new ID starts fresh state.
+  Blank inputs return 422. Reuse a session ID to continue; a new ID starts fresh conversation and location state against the current shared building.
 - `POST /buildings/{id}/transcribe`: multipart audio → editable transcript using ElevenLabs Scribe.
 - `POST /tts`: `{text}` → ElevenLabs MP3 of the existing agent's reply.
 - `GET /voice`: Agent-owned recording, transcript review, chat and spoken-reply page. See
@@ -47,8 +47,8 @@ Verified: a 46.1 m route with complete ground-floor coordinates and Core's direc
 
 ## State and actions
 
-Each `(building_id, session_id)` owns a fresh Core Building, chat history, confirmed position and
-step-free preference. `remember_context` records explicit starts/arrivals and mobility needs;
+Each `(building_id, session_id)` owns chat history, a confirmed position, a planned trip and a
+step-free preference. Its Core Building synchronizes with the current shared building revision. `remember_context` records explicit starts/arrivals and mobility needs;
 planning a route does not move the user. Remembered step-free requirements are enforced by the
 chat tool layer for routes, nearest amenities, errands, exit distances and reachability.
 Calls in the same
@@ -66,8 +66,11 @@ Actions come from successful real tool calls in the current turn:
 | `add_door` | `door_added`: the actual new opening |
 | configured `build_building` | `building_created`: validated and newly registered building ID |
 
-The UI should replace its closure set and apply door edits locally. The raw building endpoint stays
-unchanged by a session's closures/doors; these changes do not affect other sessions or source data.
+The UI replaces its closure set and applies `building_state` snapshots. Successful chat edits are
+published to the shared catalog and saved atomically under `agent_output/sessions/changes/`.
+Other sessions synchronize before answering; the UI checks revisions every five seconds. The
+organizer's source files remain unchanged. An edit that races a newer revision returns 409 rather
+than overwriting it; retry against the updated map.
 No action is reconstructed by replaying a tool or reading model-written JSON. A later turn cannot
 reuse an old turn's actions. Route geometry is captured before later tool calls can change `last_route`.
 Multi-stop route results include Core-computed leg distances while retaining the complete route action.
@@ -142,3 +145,38 @@ uv run --frozen --env-file .env python -m agent.interactions \
 This invokes the actual HTTP handler through ASGI with live Claude calls and spends API credits.
 The output must be a new file. See [the interaction log](../docs/interaction_log.md) for before/after
 results, fixture adaptation, manual review and limits. These are team checks, not an official score.
+
+
+## Calibrated floor-plan imports
+
+The API now provides `POST /buildings/import` (multipart `file` JSON), `POST /imports/preview` (multipart `files`, images/PDF), `GET /imports/{upload_id}/pages/{index}`, `POST /imports/build` and `GET /imports/status`.
+
+Build accepts `{upload_id,name,floors:[{page,a,b,length_m,level,height_m,name,verified_step_free}]}`. `a` and `b` are normalized image coordinates marking the same physical reference on each floor. Plans are rasterized to at most 1600 pixels per side, limited to 20 MB/file and 12 pages. Scale is checked before model calls. Validated registrations persist under the app output directory; generated filenames and collision checks preserve existing buildings. Successful identical build requests are cached. Models carry `geometry_status:"draft"` and review warnings.
+
+Import reachability uses Core's terminal entrance-door nodes rather than a shared `outside` graph node. Floor-plan extraction does not create missing entrances or unresolved shafts. Route map actions now include additive ordered `segments:[{floor_id,points}]`, alongside the existing `floors`, `steps`, and `length_m` fields, to preserve repeated visits to floors.
+
+
+## Indoor directions and building updates
+
+- `POST /buildings/{id}/route`: `{session_id,start,destination,via?:[],step_free?:false}`. Runs Core directly, with no model request. Remembers the planned trip without claiming that the user is physically at its start. Returns `{reply,actions}`.
+- `DELETE /buildings/{id}/trip/{session_id}` clears the saved trip.
+- `GET /buildings/{id}/changes` returns `{revision,closed,changes,warnings}`.
+- `POST /buildings/{id}/changes`: `{session_id,kind:"closure",element_id,closed}` or `{session_id,kind:"door",first,second,step_free}`. Saves the change and recalculates the session's current trip. New doors require adjoining rooms on one floor; step-free status must be confirmed.
+- `building_state`: `{type,building}` replaces the local snapshot and closure metadata. `route_unavailable`: `{type,reason}` clears any previous trail. A blocked accessible route never silently falls back to stairs.
+- `route` retains the original fields and adds `start_space_id`, `destination_space_id`, `via_space_ids`, `step_free`, `geometry_valid`, optional `geometry_notice` and `distance_note`. Ordered segments may contain `exit_connector_id` to disambiguate parallel stairs/lifts.
+
+The display path reconstructs Core's graph edges using an interior visibility graph. It bends around concave corners and passes through the mapped door landings. It refuses a walkthrough when the geometry cannot be verified, even if Core's scoring fallback supplies a distance. Core's official route costs remain unchanged: floor-transfer totals are walking-equivalent metres, including lift waiting or stair-climbing allowances. Furniture is not a routing obstacle under the challenge's route model.
+
+
+## Live Warn: community reports and targeted route updates
+
+- `POST /buildings/{id}/warnings`: `{session_id,element_id,kind,message,reporter?,blocks_route?,planned_trip?}`. Kinds: `lift_outage`, `blocked_access`, `hazard`, `other`. Message is required (1–280 characters), public reporter name is optional (40 max). Lift outage targets normalize to the whole lift and always block routing; other reports can be advisory. Place IDs come from the loaded building, not a fixed demo.
+- `POST /buildings/{id}/warnings/{warning_id}/resolve`: `{session_id,planned_trip?}`. Resolution is idempotent. Reports remain active until explicitly resolved; they do not silently expire and reopen equipment.
+- `GET /buildings/{id}/events?since={revision}` streams SSE `building-update` events containing `{revision,closed}` with an event ID. Reconnects honor `Last-Event-ID`; the latest full state is fetched rather than replaying every event. Heartbeats keep connections alive.
+- `POST /buildings/{id}/sync`: `{session_id,revision,planned_trip?}` checks the saved trip against the current building. Optional `planned_trip` uses the `/route` request shape and restores lost in-memory session state after restart. Warning mutations accept it too.
+- Additive action `route_update`: `{changed,title,message,previous_length_m,new_length_m,warning_ids}`. Advisories on the route notify without replacing its geometry. Changed paths keep destination, ordered stops and step-free constraints; an impossible trip returns `route_unavailable`.
+- `route.element_ids` identifies the actual rooms, openings and vertical connectors used. `building_state.preserve_route:true` leaves an unaffected trail intact; `geometry_changed:false` means only building metadata changed, allowing the client to retain its renderer and camera.
+
+Active warning closures and manual/chat closures are separate layers. Resolving one report does not reopen another active report or a manual closure. Chat's `set_closed` tool reports when an active warning still blocks an attempted reopening. Reports, closures and revisions persist atomically with the building snapshot. Up to 100 active and 100 resolved reports are retained per building.
+
+The frontend uses SSE with a five-second polling fallback, queues synchronization during agent requests, immediately withdraws a trail when a received closure intersects it, and preserves unaffected playback. A changed route pauses walking and asks the user to confirm their current room before restarting. Notifications appear inside the app; this is not background OS push or automatic equipment detection. Use one shared backend process for the hackathon: the current catalog/session locks are process-local, with file persistence, not a distributed multi-worker database. Community reports are not independently verified or authenticated staff approvals.

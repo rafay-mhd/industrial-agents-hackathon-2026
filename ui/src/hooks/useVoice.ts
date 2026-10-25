@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API, request } from "../lib/api";
+import { playPCM, realtimeMicrophone } from "../lib/streamingVoice";
 import type { VoicePhase } from "../components/VoiceOrb";
 
 type Transcription = {
@@ -11,7 +12,23 @@ export function useVoice(
   buildingId: string,
   onTranscript: (text: string) => Promise<string | null>,
   onError: (message: string) => void,
+  options: {
+    streaming?: boolean;
+    realtime?: boolean;
+    onInterrupt?: () => void;
+  } = {},
 ) {
+  const optionsRef = useRef(options);
+  useEffect(() => {
+    optionsRef.current = options;
+  }, [options]);
+  const [transcript, setTranscript] = useState(""),
+    [transport, setTransport] = useState<"realtime" | "turn-based">(
+      "turn-based",
+    );
+  const realtime = useRef<(() => void) | null>(null),
+    inputAbort = useRef<AbortController | null>(null),
+    turn = useRef(0);
   const [active, setActive] = useState(false),
     [phase, setPhase] = useState<VoicePhase>("idle");
   const phaseRef = useRef<VoicePhase>("idle"),
@@ -43,6 +60,7 @@ export function useVoice(
   }, []);
 
   const stopAudio = useCallback(() => {
+    pending.current?.abort();
     source.current?.stop();
     source.current = null;
     playDone.current?.();
@@ -51,6 +69,12 @@ export function useVoice(
   }, []);
   const stop = useCallback(() => {
     generation.current++;
+    turn.current++;
+    realtime.current?.();
+    realtime.current = null;
+    inputAbort.current?.abort();
+    inputAbort.current = null;
+    setTranscript("");
     activeRef.current = false;
     setActive(false);
     pending.current?.abort();
@@ -79,16 +103,35 @@ export function useVoice(
       pending.current = controller;
       try {
         const ctx = await audioContext();
-        const response = await fetch(`${API}/tts`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: text.slice(0, 10000) }),
-          signal: controller.signal,
-        });
-        if (!response.ok)
+        const response = await fetch(
+          `${API}/tts${optionsRef.current.streaming ? "/stream" : ""}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: text.slice(0, 10000) }),
+            signal: controller.signal,
+          },
+        );
+        if (!response.ok) {
+          const detail = await response.json().catch(() => null);
           throw new Error(
-            "Voice playback is unavailable. The full answer is in the conversation.",
+            typeof detail?.detail === "string"
+              ? detail.detail
+              : "Voice playback is unavailable. The full answer is in the conversation.",
           );
+        }
+        if (optionsRef.current.streaming) {
+          await playPCM(
+            response,
+            ctx,
+            controller.signal,
+            () => transition("speaking"),
+            (level) => {
+              output.current = level;
+            },
+          );
+          return;
+        }
         const buffer = await ctx.decodeAudioData(await response.arrayBuffer());
         if (
           generation.current !== currentGeneration ||
@@ -133,8 +176,13 @@ export function useVoice(
           player.start();
           tick();
         });
+      } catch (error) {
+        if (!controller.signal.aborted) throw error;
       } finally {
-        if (generation.current === currentGeneration)
+        if (
+          generation.current === currentGeneration &&
+          pending.current === controller
+        )
           transition(activeRef.current ? "listening" : "idle");
         if (pending.current === controller) pending.current = null;
       }
@@ -169,6 +217,111 @@ export function useVoice(
       stream.current = media;
       activeRef.current = true;
       setActive(true);
+      media.getAudioTracks()[0]?.addEventListener(
+        "ended",
+        () => {
+          if (generation.current === run) {
+            stop();
+            callbacks.current.onError(
+              "Microphone disconnected. Start voice again.",
+            );
+          }
+        },
+        { once: true },
+      );
+      if (
+        optionsRef.current.realtime &&
+        ctx.audioWorklet &&
+        typeof AudioWorkletNode !== "undefined"
+      ) {
+        const controller = new AbortController();
+        inputAbort.current = controller;
+        try {
+          const close = await realtimeMicrophone(
+            ctx,
+            media,
+            buildingId,
+            controller.signal,
+            {
+              level: (value) => {
+                input.current = value;
+              },
+              partial: (text) => {
+                if (generation.current !== run || !text.trim()) return;
+                if (["speaking", "thinking"].includes(phaseRef.current)) {
+                  turn.current++;
+                  stopAudio();
+                  optionsRef.current.onInterrupt?.();
+                }
+                setTranscript(text);
+                transition("hearing");
+              },
+              committed: (text) => {
+                if (generation.current !== run || !text.trim()) return;
+                const thisTurn = ++turn.current;
+                setTranscript(text);
+                transition("thinking");
+                void (async () => {
+                  try {
+                    const reply = await callbacks.current.onTranscript(
+                      text.trim(),
+                    );
+                    if (generation.current !== run || turn.current !== thisTurn)
+                      return;
+                    setTranscript("");
+                    if (reply) await speak(reply);
+                    if (generation.current === run && turn.current === thisTurn)
+                      transition("listening");
+                  } catch (error) {
+                    if (
+                      generation.current === run &&
+                      turn.current === thisTurn
+                    ) {
+                      transition("listening");
+                      callbacks.current.onError(
+                        error instanceof Error
+                          ? error.message
+                          : "Could not answer that question.",
+                      );
+                    }
+                  }
+                })();
+              },
+              error: (message) => {
+                if (generation.current === run) {
+                  stop();
+                  callbacks.current.onError(message);
+                }
+              },
+            },
+          );
+          if (generation.current !== run) {
+            close();
+            return;
+          }
+          realtime.current = close;
+          setTransport("realtime");
+          transition("listening");
+          return;
+        } catch (error) {
+          if (generation.current !== run) return;
+          if (
+            error instanceof Error &&
+            /credits.*exhausted|quota_exceeded/i.test(error.message)
+          ) {
+            stop();
+            transition("error");
+            callbacks.current.onError(error.message);
+            return;
+          }
+          controller.abort();
+          inputAbort.current = null;
+          callbacks.current.onError(
+            "Live transcription is unavailable. Using turn-by-turn speech for this conversation.",
+          );
+        }
+      }
+      setTransport("turn-based");
       const mic = ctx.createMediaStreamSource(media),
         analyser = ctx.createAnalyser();
       analyser.fftSize = 2048;
@@ -313,7 +466,7 @@ export function useVoice(
         error instanceof Error ? error.message : "Microphone access failed.",
       );
     }
-  }, [audioContext, buildingId, speak, stop, transition]);
+  }, [audioContext, buildingId, speak, stop, stopAudio, transition]);
 
   const interrupt = useCallback(() => {
     if (phaseRef.current === "speaking") stopAudio();
@@ -326,5 +479,16 @@ export function useVoice(
     },
     [buildingId, stop],
   );
-  return { active, phase, input, output, start, stop, speak, interrupt };
+  return {
+    active,
+    phase,
+    input,
+    output,
+    start,
+    stop,
+    speak,
+    interrupt,
+    transcript,
+    transport,
+  };
 }

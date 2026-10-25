@@ -11,6 +11,8 @@ export type BuildingSummary = {
   floors: { level: number; name: string }[];
 };
 export type VoiceStatus = {
+  realtime?: boolean;
+  streaming?: boolean;
   configured: boolean;
   speech_to_text: string | false;
   text_to_speech: string | false;

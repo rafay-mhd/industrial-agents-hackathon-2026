@@ -70,7 +70,9 @@ class ServerTests(unittest.TestCase):
             self.assertEqual([a['type'] for a in data['actions']],['highlight','route'])
             route = data['actions'][-1]
             b = self.app.state.sessions[(ID,'one')].agent.map
-            self.assertEqual(route['floors'],b.route_geometry()['floors'])
+            self.assertTrue(route['geometry_valid'])
+            self.assertEqual(route['floors']['0'][0],b.route_geometry()['floors']['0'][0])
+            self.assertGreater(len(route['floors']['0']),len(b.route_geometry()['floors']['0']))
             self.assertEqual(route['length_m'],b.last_route.length_m)
             self.assertTrue(data['actions'][0]['asset_ids'])
             self.assertEqual(self.post('thanks').json()['actions'],[])
@@ -85,7 +87,7 @@ class ServerTests(unittest.TestCase):
         self.assertNotEqual(routes[0]['floors'],routes[1]['floors'])
         self.assertEqual(routes[0]['length_m'],routes[1]['length_m'])
 
-    def test_closures_reopen_and_history_persist_only_in_their_session(self):
+    def test_closures_are_shared_while_chat_history_remains_per_session(self):
         def ask(agent,message):
             agent.messages.append({'role':'user','content':message})
             if message in {'close','open'}:
@@ -95,9 +97,12 @@ class ServerTests(unittest.TestCase):
             closed = self.post('close').json()
             self.assertTrue(closed['actions'][0]['element_ids'])
             self.assertIn('Closed count 1; turns 2',self.post('status').json()['reply'])
-            self.assertIn('Closed count 0; turns 1',self.post('status','other').json()['reply'])
-            self.assertEqual(self.post('open').json()['actions'],[{'type':'closed','element_ids':[]}])
-        self.assertEqual(self.client.get(f'/buildings/{ID}').json(),json.loads((BUILDING/'building.json').read_text()))
+            self.assertIn('Closed count 1; turns 1',self.post('status','other').json()['reply'])
+            self.assertEqual(self.post('open').json()['actions'][0],{'type':'closed','element_ids':[]})
+        refreshed=self.client.get(f'/buildings/{ID}').json()
+        self.assertEqual(refreshed['building']['closed_element_ids'],[])
+        self.assertEqual(refreshed['building']['revision'],2)
+        self.assertEqual(refreshed['spaces'],json.loads((BUILDING/'building.json').read_text())['spaces'])
 
     def test_door_action_and_failed_turn_rollback(self):
         def ask(agent,message):

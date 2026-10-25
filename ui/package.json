@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "node --experimental-strip-types --test tests/*.test.mjs && vitest run tests/voice.test.tsx",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs && vitest run tests/*.test.tsx",
     "preview": "vite preview"
   },
   "dependencies": {

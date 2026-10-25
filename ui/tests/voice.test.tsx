@@ -210,3 +210,89 @@ test("permission failure is reported without starting a recorder or sending a re
   expect(error).toHaveBeenCalledWith("Microphone permission denied");
   expect(fetch).not.toHaveBeenCalled();
 });
+
+// PCM must start before the response completes, preserve split samples and stop on interruption.
+import { playPCM } from "../src/lib/streamingVoice";
+test("Streaming playback starts before EOF and keeps sample boundaries across chunks", async () => {
+  const buffers: Float32Array[] = [],
+    nodes: FakeSource[] = [];
+  const ctx = Object.assign(new FakeAudioContext(), {
+    currentTime: 0,
+    createBuffer: (_channels: number, length: number, rate: number) => {
+      const data = new Float32Array(length);
+      buffers.push(data);
+      return { duration: length / rate, getChannelData: () => data };
+    },
+    createBufferSource: () => {
+      const node = new FakeSource();
+      nodes.push(node);
+      return node;
+    },
+  });
+  let writer!: ReadableStreamDefaultController<Uint8Array>;
+  const response = new Response(
+    new ReadableStream({
+      start(controller) {
+        writer = controller;
+      },
+    }),
+  );
+  const controller = new AbortController(),
+    start = vi.fn();
+  const done = playPCM(
+    response,
+    ctx as unknown as AudioContext,
+    controller.signal,
+    start,
+    () => {},
+  );
+  writer.enqueue(new Uint8Array([0, 128, 255]));
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(start).toHaveBeenCalledOnce();
+  expect(buffers[0][0]).toBe(-1);
+  writer.enqueue(new Uint8Array([127]));
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(buffers[1][0]).toBeCloseTo(32767 / 32768);
+  writer.close();
+  await Promise.resolve();
+  await Promise.resolve();
+  for (const node of nodes) node.onended?.();
+  await done;
+});
+test("Interrupt cancels the network stream and every scheduled audio chunk", async () => {
+  const cancel = vi.fn(),
+    node = new FakeSource();
+  const ctx = Object.assign(new FakeAudioContext(), {
+    currentTime: 0,
+    createBuffer: () => ({
+      duration: 0.1,
+      getChannelData: () => new Float32Array(1),
+    }),
+    createBufferSource: () => node,
+  });
+  const response = new Response(
+    new ReadableStream({
+      start(c) {
+        c.enqueue(new Uint8Array([1, 0]));
+      },
+      cancel,
+    }),
+  );
+  const controller = new AbortController();
+  const done = playPCM(
+    response,
+    ctx as unknown as AudioContext,
+    controller.signal,
+    () => {},
+    () => {},
+  );
+  await Promise.resolve();
+  await Promise.resolve();
+  controller.abort();
+  await done;
+  expect(cancel).toHaveBeenCalled();
+  expect(node.stop).toHaveBeenCalled();
+  expect(node.disconnect).toHaveBeenCalled();
+});

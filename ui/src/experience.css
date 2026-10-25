@@ -9,7 +9,7 @@
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  opacity: 0.36;
+  opacity: 0.85;
 }
 .shader-surface {
   width: 100%;
@@ -21,11 +21,18 @@
 .shader-stage {
   background: linear-gradient(
     125deg,
-    #efe5d1,
-    #dce3f2 44%,
-    #f2e8dc 70%,
-    #e5cbd1
+    #f5eddf,
+    #e5d3b2 44%,
+    #faf4e9 70%,
+    #efdfc4
   );
+}
+.flow-field-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  pointer-events: none;
 }
 .shader-halo {
   background: radial-gradient(
@@ -335,14 +342,14 @@
 }
 .map-body {
   isolation: isolate;
-  background: #f1ecdf;
+  background: #faf7ef;
 }
 .map-atmosphere {
   position: absolute;
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  opacity: 0.75;
+  opacity: 0.65;
 }
 .map-atmosphere:after {
   content: "";
@@ -993,3 +1000,36 @@
     animation: none !important;
   }
 }
+
+/* Walking guidance stays readable over a moving map. */
+.navigation-controls { flex-wrap: wrap; }
+.navigation-player { max-height: calc(100% - 28px); overflow-y: auto; scrollbar-width: thin; }
+.live-walk-settings { border-top: 1px solid #c8b79555; margin-top: 12px; padding-top: 12px; font-size: 12px; }
+.live-walk-settings summary { display: flex; gap: 7px; align-items: center; cursor: pointer; color: #29478e; font-weight: 650; }
+.live-walk-settings p { line-height: 1.5; margin: 12px 0; }
+.live-walk-settings label { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
+.live-walk-settings input { accent-color: #29478e; }
+.live-walk-settings select, .live-walk-settings button { background: #f8f2e6; color: #29478e; border: 1px solid #c9b99888; border-radius: 12px; padding: 9px 12px; }
+.live-walk-settings small { display:block; margin-top: 10px; line-height: 1.5; color: #766b57; }
+.live-walk-settings button:disabled { opacity:.45; cursor:not-allowed; }
+.plan-import { margin-top:28px; padding-top:24px; border-top:1px solid #c8b79555; }
+.plan-import-title { display:flex; gap:12px; align-items:flex-start; color:#29478e; }
+.plan-import-title p { margin:6px 0 16px; font-size:13px; }
+.plan-calibration { margin:18px 0; padding:14px; border:1px solid #c8b79566; border-radius:18px; background:#fffcf5; }
+.plan-calibration svg { width:100%; display:block; cursor:crosshair; background:white; border-radius:10px; touch-action:manipulation; }
+.plan-floor-heading { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+.plan-floor-heading button { border:0; background:transparent; color:#29478e; padding:8px; }
+.plan-fields { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.plan-fields label { display:grid; gap:5px; font-size:12px; color:#766b57; }
+.plan-fields input { min-width:0; width:100%; border:1px solid #d4c5aa; border-radius:9px; background:#faf7f0; color:#29478e; padding:10px; }
+.plan-accessibility { display:flex; align-items:flex-start; gap:8px; font-size:12px; line-height:1.5; margin-top:14px; }
+.plan-import button:disabled { opacity:.5; cursor:wait; }
+.scene-viewport.is-walking .scene-heading,
+.scene-viewport.is-walking .scene-finish,
+.scene-viewport.is-walking .scene-connections,
+.scene-viewport.is-walking .scene-site-controls,
+.scene-viewport.is-walking .scene-navigation,
+.scene-viewport.is-walking .scene-bottom,
+.scene-viewport.is-walking .scene-labels { display:none; }
+.navigation-player.is-first-person { width:min(330px,calc(100% - 32px)); }
+.live-transcript { color:#29478e; font-size:15px; line-height:1.5; background:#faf7efb8; border:1px solid #c7bba355; border-radius:14px; padding:12px 16px; }

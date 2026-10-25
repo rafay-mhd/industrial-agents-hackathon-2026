@@ -11,12 +11,12 @@
     BlinkMacSystemFont,
     sans-serif;
   color: #263e70;
-  background: #f4f0e7;
+  background: #faf7f0;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  --canvas: #f4f0e7;
+  --canvas: #faf7f0;
   --paper: #fcfaf5;
   --blue: #29458b;
   --ink: #263e70;

@@ -19,6 +19,9 @@ from agent.agent import BuildingAgent
 from agent.answer import _get_client
 from agent.chat_tools import chat_tools
 from agent.voice import install_voice
+from agent.imports import install_imports
+from agent.building_updates import BuildingUpdates, install_updates, route_action
+from agent.live_warnings import install_warnings
 from core import Building
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -111,7 +114,7 @@ def create_app(data_root: Path | None = None, output_root: Path | None = None,
     client_factory = client_factory or _get_client
     app = FastAPI(title='Team Simran building agent')
     app.add_middleware(CORSMiddleware, allow_origins=['http://localhost:5173'],
-                       allow_methods=['GET', 'POST'], allow_headers=['Content-Type'])
+                       allow_methods=['GET', 'POST', 'DELETE'], allow_headers=['Content-Type'])
     sessions: dict[tuple[str, str], Session] = {}
     sessions_lock = Lock()
     app.state.sessions, app.state.catalog = sessions, catalog
@@ -129,6 +132,7 @@ def create_app(data_root: Path | None = None, output_root: Path | None = None,
                     raise HTTPException(503, 'Session capacity reached; restart the demo server to reset sessions.')
                 output = output_root / uuid4().hex
                 agent = BuildingAgent(Building(data), output, client=client_factory(), mode='chat')
+                agent.map.closed=set(data['building'].get('closed_element_ids',[]))
                 sessions[key] = Session(agent, output)
             return sessions[key]
 
@@ -145,9 +149,11 @@ def create_app(data_root: Path | None = None, output_root: Path | None = None,
         try:
             session = get_session(building_id, request.session_id)
             with session.lock:
+                synced=updates.sync(session)
                 agent = session.agent
                 snapshot = (deepcopy(agent.map.data), set(agent.map.closed), deepcopy(agent.map.last_route),
-                            len(agent.messages), dict(agent.usage), len(agent.responses), deepcopy(agent.context))
+                            deepcopy(agent.map.last_route_points), len(agent.messages), dict(agent.usage),
+                            len(agent.responses), deepcopy(agent.context))
                 pending = []
                 session.actions.clear()
 
@@ -167,18 +173,31 @@ def create_app(data_root: Path | None = None, output_root: Path | None = None,
                     reply, understood, clarification = parse_reply(raw_reply)
                     if not reply:
                         reply = understood or ''
-                    # Commit newly built buildings together, with a collision check under the same lock.
-                    with catalog.lock:
-                        if any(b.data['building']['id'] in catalog.data for b in pending):
-                            raise RuntimeError('A generated building ID was registered by another session')
-                        for created in pending:
-                            catalog.data[created.data['building']['id']] = deepcopy(created.data)
+                    with updates.lock(building_id):
+                        if updates.state(building_id)["revision"] != snapshot[0]["building"].get("revision",0):
+                            raise HTTPException(409,"The building changed while answering. Please retry against the updated map.")
+                        # Commit newly built buildings together, with a collision check under the same lock.
+                        with catalog.lock:
+                            if any(b.data['building']['id'] in catalog.data for b in pending):
+                                raise RuntimeError('A generated building ID was registered by another session')
+                            for created in pending:
+                                catalog.data[created.data['building']['id']] = deepcopy(created.data)
+                        edited=any(a['type'] in {'closed','door_added'} for a in session.actions)
+                        if (edited or synced) and not any(a['type']=='route' for a in session.actions):
+                            recalculated=route_action(agent)
+                            if recalculated:
+                                session.actions.append(recalculated)
+                                reply+='\n\n'+('Your current trip has been recalculated for the updated building.' if recalculated['type']=='route' else recalculated['reason'])
+                        state=updates.publish(agent,session.actions)
+                        if state:session.actions.append(state)
+                        elif synced:session.actions.insert(0,dict(type='building_state',building=catalog.get(building_id)))
                     return ChatResponse(reply=reply, understood=understood,
                                         needs_clarification=clarification, actions=deepcopy(session.actions))
                 except Exception:
-                    data, closed, route, message_count, usage, response_count, context = snapshot
+                    data, closed, route, route_points, message_count, usage, response_count, context = snapshot
                     agent.map = Building(data)
                     agent.map.closed, agent.map.last_route = closed, route
+                    agent.map.last_route_points = route_points
                     del agent.messages[message_count:]
                     agent.usage = usage
                     agent.context = context
@@ -197,6 +216,10 @@ def create_app(data_root: Path | None = None, output_root: Path | None = None,
             raise HTTPException(500, 'Chat failed. Session changes were not applied.') from None
 
     install_voice(app, catalog, voice_factory)
+    install_imports(app, catalog, output_root / 'imports', client_factory)
+    updates=BuildingUpdates(catalog,output_root/'changes')
+    install_updates(app,updates,get_session)
+    install_warnings(app,updates,get_session)
     return app
 
 

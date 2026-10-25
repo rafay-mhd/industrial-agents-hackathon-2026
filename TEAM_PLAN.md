@@ -628,3 +628,13 @@ the README, so the judges understand what we built.
 - **Claude vision**: sending an image to Claude together with text.
 - **uv**: the Python package and environment manager the kit uses. **FastAPI/uvicorn**: the small web server. **Vite**: the web app dev server.
 - **JSONL**: one JSON object per line. **Dev set**: buildings with answers for self-checking. **Test set**: buildings without answers that we submit.
+
+
+### Integrated indoor navigation contract update — 2026-10-25
+
+The map-first planner calls the existing Core through `/buildings/{id}/route`. Chat and the new `/changes` controls share persistent building revisions; successful doors/closures now update the catalog across sessions, while conversation/location/trip memory remains per session. Existing actions remain compatible; additive `building_state` and `route_unavailable` actions synchronize changes and clear stale trails. Routes add verified interior polylines, ordered connector IDs, selected stops/accessibility and explicit geometry availability. Source datasets and Core's scoring rules are unchanged. Details and request shapes: [agent/SERVER.md](agent/SERVER.md).
+
+
+### Live Warn integration — 2026-10-25
+
+Shared community reports now feed the existing Core route planner. The agent/backend owns persistence, closure layering, SSE revision notifications and trip-specific synchronization; the frontend owns the reporting feed, warning pins, affected-route banner and optional old/new trail comparison. No new routing algorithm or ElevenLabs agent is introduced. Existing agent, direct planner and phone walkthrough consume the same effective closures. API/action contracts and single-process prototype limits are documented in [agent/SERVER.md](agent/SERVER.md).

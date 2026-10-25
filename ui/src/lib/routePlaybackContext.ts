@@ -7,6 +7,7 @@ export type Controls = {
   follow: () => void;
   explore: () => void;
   clear: () => void;
+  walkView: () => void;
 };
 export const Context = createContext<Controls | null>(null);
 export function useRoutePlayback() {

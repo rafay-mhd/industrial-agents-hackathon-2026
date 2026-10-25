@@ -4,6 +4,155 @@ One entry per test run, newest first. Every entry names the commit it was run on
 numbers, and every miss with its cause. Add an entry whenever Core, Agent prompts or tools change, and after
 each dev run before a new submission CSV.
 
+## 2026-10-25 — Live Warn, targeted rerouting and cross-user notifications
+
+Baseline: `main` at `24a4144`, with prior uncommitted changes preserved; this run is on the working tree.
+
+Commands: `npm --prefix ui run build`, `npm --prefix ui run lint`, `npm --prefix ui run test`; `MPLCONFIGDIR=/private/tmp/inside-mpl uv run --frozen --cache-dir /private/tmp/inside-uv-cache python -m unittest discover -s agent/tests`; the same Python prefix with `-m core.oracle_check data/dev`; `MPLCONFIGDIR=/private/tmp/inside-mpl uv run --frozen --cache-dir /private/tmp/inside-uv-cache --env-file .env python -m agent.benchmark data/dev/proc-factory-dev-003 data/dev/proc-factory-dev-003/questions.jsonl --no-kind-hints --model claude-sonnet-5-5 --out agent_output/verification_20261025/live_warn/factory.csv`; `git diff --check`.
+
+- **104 backend tests**, **71 UI tests** (55 Node + 16 Vitest), build and lint pass. Core dev oracle **138/138**. Live Claude factory benchmark **5/5**; diagnostics saved under `agent_output/verification_20261025/live_warn/`. Existing lazy Three.js bundle-size warning remains; no source dataset, starter agent or scorer edits.
+- Regression coverage: impacted versus unrelated trips; cautions without rerouting; step-free no-alternative behavior and restoration; independent manual/report closure layers; duplicate reports; restart persistence and lost session recovery; invalid input; failed persistence rollback; ordered stops; new-door geometry sync; SSE revision resume; event coalescing while busy; obsolete responses; polling fallback; unaffected playback progress/camera; avoiding duplicate mutation notifications.
+- Native Edge, two independent browser tabs on imported synthetic `live-warn-house-20261025`: Reception → upper lift landing initially uses the lift; another visitor posts an outage through the real form; first tab automatically receives the adapted stairs route and **See what changed** shows dashed red previous geometry beside the current footprint trail. Pins and the report feed show the actual lift target and entered message. Step-free Reception → Upper studio correctly reports no available route; resolving the warning restores the lift route. Test warning was resolved at the end. All organizer buildings remained unmodified.
+- Visual review moved the notification inside the map so it does not cover view controls. Browser testing exposed a duplicate sync response replacing the main route-change notice; synchronous revision acknowledgement now suppresses it, with a dedicated passing regression test.
+- Real HTTP SSE probe confirmed `text/event-stream`, event ID 2, `building-update` and `{revision:2,closed:[]}` after resolution; evidence in `sse_check.json`. No repeated full geometry transfer while revisions are unchanged.
+- Limits: shared single-process backend; in-app notifications, not OS push; community reports are unverified and do not expire automatically. Phone motion accuracy was not retested and requires real-device verification. No live ElevenLabs calls were retried because the user deferred them after speech credits ran out.
+
+## 2026-10-25 — map-first planner, verified walkthroughs and shared updates
+
+Baseline: `main` at `24a4144` with the previous uncommitted upgrades preserved.
+
+Commands: `npm --prefix ui run build`, `npm --prefix ui run lint`, `npm --prefix ui run test`; `MPLCONFIGDIR=/private/tmp/inside-mpl uv run --frozen --cache-dir /private/tmp/inside-uv-cache python -m unittest discover -s agent/tests`; the same Python prefix with `-m core.oracle_check data/dev`; the BENCHMARK.md factory command with `--no-kind-hints --model claude-sonnet-5-5 --out agent_output/verification_20261025/maps/factory.csv` and the local `.env`; `git diff --check`.
+
+- **91 backend tests**, **62 UI tests** (52 Node + 10 Vitest), build and lint pass. The existing lazy Three.js bundle warning remains.
+- Official Core dev checks: **138/138**. Live Claude factory benchmark: **5/5**. No scorer, starter agent or supplied building data changed.
+- New geometry tests cover a concave hallway, boundaries crossed only at real doorways, invalid doorway coordinates, repeated floors and explicit connectors. Camera position no longer interpolates through corners; floor transfers do not simulate passage through slabs. Unverified geometry blocks walkthroughs. Sensor drift is map-matched and stops on excessive deviation.
+- The fresh two-floor **Corner House** fixture passes the import validator and exercises an initially disconnected store, a lift, stairs and a bent corridor. HTTP tests verify shared closure/reopening, step-free no-route behavior, restart persistence, mid-wall door placement, automatic rerouting, preserved multi-stop order, source-file immutability and stale-revision rejection.
+- Edge browser checks: Start/Destination search → step-free route; full-route preview remains paused until explicitly started; eye-level doorway navigation; a lift transition screen with **Show the next floor**; closing East lift withdraws the inaccessible route; adding a door Reception → New store creates an immediate **4 m** route. Voice and chat remain in **Ask Inside**.
+- Live Claude update check: a previously blocked accessible trip was restored by asking the agent to reopen East lift. It returned `closed`, a verified step-free `route`, and `building_state`; shared closures became empty. A discovered explanation issue (walking step lengths omit lift waiting allowance) was addressed in chat instructions and route metadata; a follow-up live response correctly explained the allowance. Core totals were preserved.
+- ElevenLabs live streaming remains deferred at the user's request because that workspace has zero credits. No new live speech or physical-phone-accuracy claim is made.
+
+Evidence: `agent_output/verification_20261025/maps/` contains the fixture, official factory results and live-agent responses. These files are ignored local verification artifacts.
+
+## 2026-10-25 — first-person walking, calibrated imports and streaming transport
+
+Baseline: `main` at `24a4144`, with the previous integrated-verification and shader changes preserved. This entry describes the uncommitted upgrade; it does not replace the earlier physical-microphone result.
+
+Commands/checks:
+
+```text
+npm --prefix ui run build
+npm --prefix ui run lint
+npm --prefix ui test
+MPLCONFIGDIR=/private/tmp/inside-mpl uv run --frozen --cache-dir /private/tmp/inside-uv-cache python -m unittest discover -s agent/tests
+MPLCONFIGDIR=/private/tmp/inside-mpl uv run --frozen --cache-dir /private/tmp/inside-uv-cache python -m core.oracle_check data/dev
+git diff --check
+```
+
+Results:
+
+- Backend: **80/80** tests. UI: **60/60** (50 Node geometry/navigation tests, 8 voice tests, 2 motion-hook tests). Build, lint and whitespace checks pass. The existing lazy Three.js chunk size warning remains.
+- Official dev reference checks through Core: **138/138**. The previous full Claude dev run remains 138/138; it was not repeated solely for additive UI route fields.
+- Live PNG extraction: a newly drawn five-room plan, with a known 12 m width, recovered **5 named rooms and 5 openings**. Polygon IoU against the independent drawing is **0.9016–0.9312**. This is a draft-geometry check, not proof of arbitrary-plan accuracy. The source drawing, PDF, expected geometry and outputs are under `agent_output/verification_20261025/upgrade/`.
+- Browser PDF workflow: file selection → raster preview → two-point calibration → extraction → persistent catalog registration → live agent selection all passed. Generated `fresh-copper-plan` (`plan-92bf9964e7b6`) routes Copper reception → Ivory hall → Cobalt studio, step-free, **7.54 m** in Core and **7.5 m** in the UI.
+- Browser navigation: first-person camera, expanded map, visible floor footprints, pause/replay and hidden model-editing overlays inspected. Selecting Jade store → **I’m here** replanned the active trip from Jade store to the same Cobalt studio destination, retained step-free routing, and displayed **9.3 m**. Desktop calibration correctly times out with “No usable phone sensor data” and never reports a live walk. Physical phone motion/heading accuracy is **not tested**; HTTPS and a real device remain necessary.
+- Motion regressions cover stationary-noise rejection, step release/debounce, off-route estimates, live progress immunity to animation timers, turns, repeated floors, explicit floor-transfer confirmation, both-sensor initialization, heading-only updates without position movement, permission denial and sensor loss.
+- Streaming regressions cover playback before EOF, PCM samples split across chunks, cancellation of scheduled audio/network reads, single-use token scope, building isolation, and quota-error mapping. The **live upgraded ElevenLabs path is blocked**: the provider returned HTTP 401 `quota_exceeded`, **0 credits remaining**. The user explicitly requested finishing other checks for now. No successful live streaming result is claimed.
+- Integration fixes found during testing: the configured Claude model rejects forced tool choice, so extraction uses auto tool choice with validated tool output; Core entrances are terminal door nodes, so import reachability uses `exit_distances`; floor transfers clamp estimated progress before entering a connector; zero-credit speech failures now return a clear 429 instead of misleading key-permission errors.
+
+Evidence: `agent_output/verification_20261025/upgrade/verification.json`, `building.json`, `pdf-building.json`, `fresh-copper-plan.png`, `fresh-copper-plan.pdf`. No organizer data, starter agent, benchmark files or submission CSV were changed by this upgrade.
+
+## 2026-10-25 — integrated frontend, voice and unfamiliar-building verification
+
+Baseline: `main` at `24a4144`, with the local beige flow-field UI changes. Fetched `origin/main`
+at `ef6a800`: its additional changes are circulation GLBs/aliases only; no newer backend implementation.
+Before this run, the agent, voice, server, tools, context and prompts matched `origin/agent` exactly.
+Results below include the local route-state and chat-prompt fixes described here; they are not a claim
+that the unmodified baseline passed the new regression checks.
+
+Commands (Python runs used `uv run --frozen --cache-dir /private/tmp/inside-uv-cache`; live runs also
+used `--env-file .env`, with model `claude-sonnet-5-5`):
+
+```bash
+npm --prefix ui test
+npm --prefix ui run build
+npm --prefix ui run lint
+python -m unittest discover -s agent/tests -v
+python -m core.oracle_check data/train
+python -m core.oracle_check data/dev
+python -m core.oracle_check data/train --warmup
+python -m core.oracle_check data/dev --warmup
+python -m core.check_questions data/test data/test/questions.csv
+python -m agent.benchmark data/dev data/dev --no-kind-hints --model claude-sonnet-5-5 --out agent_output/verification_20261025/dev.csv
+python -m agent.report agent_output/verification_20261025/dev.jsonl
+python tests/live_ambiguity.py data/train data/dev --out agent_output/verification_20261025/ambiguity.jsonl
+python tests/live_no_route.py data/train data/dev --out agent_output/verification_20261025/no_route.jsonl
+```
+
+Results:
+
+- Frontend: **43 Node tests + 6 voice-hook tests passed**; TypeScript/production build and lint passed.
+  Existing Three.js bundle-size warning remains. The suite checks that all 280 source buildings import
+  without losing data or metadata.
+- Backend: **69/69 baseline tests passed**. Stronger multi-stop geometry coverage plus a new failed-turn
+  regression exposed two bugs despite the old suite being green. After fixes: **70/70 passed**.
+  Prompt/context checks were rerun after the final prompt change: **12/12 passed**.
+- Core vs supplied reference answers: train **517/517**, dev **138/138**; warm-up train **1,761/1,761**,
+  dev **369/369** — **2,785/2,785 total**. These are deterministic Core checks, not LLM runs.
+- Live dev benchmark, using the organizers' `benchmark.score.score_reply`: **138/138 answers and
+  138/138 parameter extractions correct**, zero errors. Per-kind: errand 19, floor area 31, largest room
+  20, stacked room 9, shared walls 24, step-free reachability 1, 3D distance 13, what-if door 2, wide delivery 19.
+  Recorded tokens: input 91,154; output 14,746; cached read 1,888,747; cached creation 519,283.
+  Token counts are not an invoice or a guarantee on unseen inputs.
+- Test split: all references in **145 questions across 38 buildings resolve**. This is a reference check;
+  hidden test answers were not available for accuracy grading. Submission files were not changed.
+- Live ambiguity: **19/19 ask instead of guessing**, both before and after the prompt adjustment.
+- Live no-route cases: **231/233 explicitly said no route; zero invented routes and zero API errors**.
+  `swiss-1457-Q07` and `swiss-148-Q07` offered alternatives without directly answering the requested
+  step-free trip. The chat prompt now requires the no-route answer before alternatives. Each affected
+  case passed **three independent retries (6/6)**. The entire 233-case suite was not rerun after that
+  wording-only change; the 19-case ambiguity suite was rerun and remained perfect.
+
+Fixes: multi-stop leg-distance calculations now preserve the complete route point list, so the UI gets
+all legs rather than only the final one. HTTP failure rollback also restores route points along with the
+route result. Door-impact comparisons preserve the same paired state. The two new/strengthened regression
+checks failed on the baseline (one failure, one error) and passed after these fixes.
+
+End-to-end checks:
+
+- Both `http://127.0.0.1:8012/api` and the Vite proxy at `http://localhost:5174/api` return the 280-building
+  catalog, configured voice status and real GLBs. A six-floor non-demo building, `proc-campus-dev-009`,
+  returns all **207 spaces** exactly matching its source JSON.
+- Authored **Amber House**, a genuinely new synthetic schema fixture: 2 floors, 10 spaces, arbitrary
+  floor IDs, negative x coordinates, a 4 m stair/lift rise, 100 m² per floor, one source-aligned entrance
+  and an 8 m structural height. Core validation has zero errors/warnings; frontend parsing preserves
+  its data, envelope and connectors. It is registered only on an isolated verification server at port
+  8013; the supplied dataset is untouched.
+- Actual ElevenLabs TTS generated the question “Take me from Amber reception to Cobalt studio without
+  stairs.” Actual STT returned that exact text; the same Claude/Core agent returned **41.2 m**, with
+  route geometry matching Core; ElevenLabs produced **455,200 bytes** of reply audio. Timing: STT 0.58 s,
+  agent 5.66 s, TTS 4.06 s — **10.30 s excluding recording and network/UI overhead**.
+- Closing the lift in that session correctly prevents the step-free route. Reopening it and requesting
+  Archive → Amber reception → Jade laboratory returns the complete **56.8 m** multi-stop geometry.
+- Browser checks on port 8013: selected Amber House; inspected its 3D exterior, 2D room map and agent
+  response; replayed the route and observed progress from Entry level to arrival at Upper level.
+  This is a simulated route preview, not real indoor position tracking.
+- Loaded `data/dev/resplan-14509/floor_0.png` through the photo chooser. It correctly remains a preview.
+  Imported the corresponding `building.json` through the actual UI file chooser: all **6 spaces** and
+  the entrance appeared in 2D/3D; the map matched the source floor plan, including the detached bathroom.
+  Local import correctly disables chat/voice until server registration.
+
+Remaining boundaries: no Builder implementation/configuration is connected, so a new photo/PDF cannot
+currently generate verified building JSON. File import does not automatically register buildings with the
+agent. The voice hook automatically cycles listening/transcribing/answer/playback, but it is turn-based,
+not simultaneous streaming audio. The user subsequently confirmed the physical microphone test on Amber
+House at port 8013: “It hears me and speaks back.” This completes manual microphone and spoken-reply
+acceptance alongside the automated provider-chain checks. Roofs/facades/furnishings are illustrative, not recovered
+architectural details. Per-floor route polylines still cannot represent every interleaving in tours that
+revisit a floor; the UI already labels that limitation.
+
+Evidence (local, ignored): `agent_output/verification_20261025/` contains benchmark traces, ambiguity and
+no-route results, six no-route retries, `http-and-voice.json`, `geometry.json`, MP3s and the fresh fixture.
+
 ## How to add an entry
 
 ```bash

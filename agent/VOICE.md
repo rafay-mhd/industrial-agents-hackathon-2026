@@ -107,3 +107,16 @@ test submission v2 has 145 answers with no supplied test answer key.
 The final server runs on port 8012. Its restart after the user's test starts fresh in-memory sessions.
 The clean-clone rehearsal installed the frozen dependencies, passed all 67 tests, and scored 5/5 on
 the documented factory benchmark. See PROGRESS.md for evidence and remaining team integration work.
+
+
+## Main UI streaming upgrade (25 October 2026)
+
+The combined app at `/` now supports realtime microphone PCM through ElevenLabs Scribe and incremental PCM playback through Eleven Flash. This is a transport upgrade around the existing Claude/Core agent; it does not create an ElevenLabs conversational agent. The older `/voice` page and its upload/transcribe/MP3 workflow are retained for compatibility.
+
+- `POST /buildings/{id}/voice-token`: validates the building, returns a single-use Scribe token plus at most 50 vocabulary hints. `Cache-Control: no-store`; never returns the main API key.
+- `POST /tts/stream`: same `{text}` input as `/tts`; returns raw signed little-endian 16-bit mono PCM at 24 kHz, with `X-Audio-Sample-Rate: 24000`. Model: `eleven_flash_v2_5`. Provider failures are handled before streaming response headers.
+- `/voice/status` advertises `realtime` and `streaming` support. Existing non-streaming endpoints are unchanged.
+- AudioWorklet captures 100 ms PCM chunks; partial/committed transcripts are distinct. Client generation guards prevent late replies after interruption, building changes or stop. Network cancellation clears all queued audio nodes.
+- Realtime transport fallback is explicitly labelled. Quota errors are distinct from missing key permissions, including ElevenLabs' HTTP 401 `quota_exceeded` response.
+
+Streaming PCM scheduling, split byte boundaries, cancellation and server endpoints are covered by regression tests. The previous physical microphone → agent → speech test passed. The new live streaming provider test cannot complete until ElevenLabs speech credits are replenished (the account reported zero); do not treat the earlier test as proof of the upgraded streaming path.

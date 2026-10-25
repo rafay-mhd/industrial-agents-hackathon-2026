@@ -48,7 +48,7 @@ class BuildingAgent(StarterBuildingAgent):
         """Keep model selection local; benchmark comparisons must not silently fall back."""
         self.messages.append({"role": "user", "content": user_text})
         system = list(self.system)
-        if self.mode == 'chat' and (self.context.position is not None or self.context.step_free):
+        if self.mode == 'chat' and (self.context.position is not None or self.context.step_free or self.context.trip):
             system.append({'type': 'text', 'text': 'Remembered user-confirmed context (a planned route does not move the user): '
                            + json.dumps(vars(self.context))})
         fallback = {"betas": [FALLBACK_BETA], "fallbacks": "default"} if self.mode == "chat" else {}

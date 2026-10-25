@@ -13,6 +13,8 @@ from anthropic.lib.tools import BetaBuiltinFunctionTool, ToolError
 from agent.tools import make_tools, as_json
 from core import Building, MapError
 from agent.context import ConversationContext
+from agent.navigation import display_route
+from agent.building_updates import door_position, set_manual_closure
 
 
 def human_steps(building: Building, steps: list[str]) -> list[str]:
@@ -42,9 +44,8 @@ class ActionTool(BetaBuiltinFunctionTool):
         result = json.loads(output)
         action = None
         if self.name == 'find_route':
-            geometry = self.building.route_geometry(self.building.last_route)
-            action = dict(type='route', length_m=result['length_m'],
-                          steps=human_steps(self.building, result['steps']), floors=geometry['floors'])
+            action=display_route(self.building,result,self.context.trip)
+            action['steps']=human_steps(self.building,result['steps'])
         elif self.name == 'search_building':
             spaces = {r['id'] for r in result['results'] if r['kind'] == 'space'}
             assets = {r['id'] for r in result['results'] if r['kind'] == 'asset'}
@@ -68,7 +69,6 @@ def chat_tools(building: Building, output: Path, actions: list[dict],
                upload_root: Path | None = None, context: ConversationContext | None = None) -> list:
     context = context if context is not None else ConversationContext()
     originals = {tool.name: tool for tool in make_tools(building, output)}
-    original_add_door = originals['add_door']
 
     @beta_tool
     def remember_context(position: str | None = None, step_free: bool | None = None,
@@ -111,7 +111,11 @@ def chat_tools(building: Building, output: Path, actions: list[dict],
         try:
             route = building.route(start, destination, step_free or context.step_free, via)
             result = asdict(route)
+            result["distance_note"]="Total distance is walking-equivalent metres: stairs cost 2 m per metre of height; a lift costs 15 m for waiting/doors plus 1 m per metre of height. Individual walking instructions omit these transfer allowances; do not add them again."
+            context.trip=dict(start=route.start_space_id,destination=route.destination_space_id,
+                              via=[building.resolve_space(s) for s in via or []],step_free=route.step_free)
             if via:
+                route_points = deepcopy(building.last_route_points)
                 stops = [start, *via, destination]
                 legs = []
                 try:
@@ -120,21 +124,23 @@ def chat_tools(building: Building, output: Path, actions: list[dict],
                         legs.append(dict(start=first, destination=second, length_m=leg.length_m, steps=leg.steps))
                 finally:
                     building.last_route = route
+                    building.last_route_points = route_points
                 result['legs'] = legs
             return as_json(result)
         except MapError as exc:
             raise ToolError(str(exc)) from exc
 
     @beta_tool
-    def add_door(first_space: str, second_space: str, step_free: bool = True) -> str:
-        """Add a real session door and report Core's before/after walk between its two rooms.
+    def add_door(first_space: str, second_space: str, step_free: bool = False) -> str:
+        """Add a real building door and report Core's before/after walk between its two rooms.
 
         Args:
             first_space: First adjacent room or corridor, exactly named by the user.
             second_space: Second adjacent room or corridor, exactly named by the user.
-            step_free: Whether the added door has no step; default true, width supplied by Core.
+            step_free: Whether the user confirmed this door has no step; defaults false until confirmed.
         """
         previous_route = building.last_route
+        previous_points = deepcopy(building.last_route_points)
         def distance():
             try:
                 return building.route(first_space, second_space, context.step_free).length_m
@@ -142,8 +148,7 @@ def chat_tools(building: Building, output: Path, actions: list[dict],
                 return None
         try:
             before = distance()
-            result = json.loads(original_add_door.call(dict(first_space=first_space,
-                                                               second_space=second_space, step_free=step_free)))
+            result = dict(added=building.add_door(first_space,second_space,step_free,door_position(building,first_space,second_space)))
             after = distance()
             result['impact'] = dict(before_m=before, after_m=after,
                                     saved_m=round(before-after, 2) if before is not None and after is not None else None,
@@ -152,8 +157,24 @@ def chat_tools(building: Building, output: Path, actions: list[dict],
         finally:
             # Internal comparisons do not invent a new user route or position.
             building.last_route = previous_route
+            building.last_route_points = previous_points
+
+    @beta_tool
+    def set_closed(element:str,closed:bool)->str:
+        """Close/reopen a direct closure. Active community warnings remain until resolved.
+
+        Args:
+            element: Named lift, stairs, room or door to update.
+            closed: True to close, False to remove its direct closure.
+        """
+        try:
+            identifier=set_manual_closure(building,element,closed)
+            return as_json(dict(element_id=identifier,closed=identifier in building.closed,
+                all_closed=sorted(building.closed),active_warning_blocks=not closed and identifier in building.closed))
+        except MapError as error:raise ToolError(str(error)) from error
 
     originals['find_route'], originals['add_door'] = find_route, add_door
+    originals['set_closed']=set_closed
     tools = [ActionTool(tool, building, actions, context) for tool in originals.values()]
     tools.append(remember_context)
     if build is None:

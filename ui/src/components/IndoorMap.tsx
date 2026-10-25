@@ -15,13 +15,39 @@ import {
 import type { Layers, Location, MapState } from "../lib/model";
 import { useRoutePlayback } from "../lib/routePlaybackContext";
 import { travelledFloorPath } from "../lib/routePlayback";
+import { footprintTrail } from "../lib/walking";
+import { useRouteFrame } from "../lib/routePlaybackContext";
+import { warningPins } from "../lib/liveWarnings";
 import { PixelPerson } from "./PixelPerson";
-import { easeCamera } from "../lib/sceneMath";
+import { easeCamera, easeZoom } from "../lib/sceneMath";
 
 export type Selection = {
   kind: "space" | "asset" | "opening" | "connector";
   id: string;
 } | null;
+
+function RouteFootprints({ floorId }: { floorId: string }) {
+  const frame = useRouteFrame();
+  const prints = useMemo(
+    () => footprintTrail(frame.plan).filter((p) => p.floorId === floorId),
+    [frame.plan, floorId],
+  );
+  return (
+    <g aria-label="Walking footprint trail">
+      {prints.map((p, i) => (
+        <path
+          key={i}
+          d="M-.045,-.12 C-.07,-.02 -.07,.12 -.015,.16 C.065,.18 .07,.06 .045,-.02 L.035,-.12 Z"
+          transform={`translate(${p.point[0]},${p.point[2]}) rotate(${(p.heading * 180) / Math.PI + 180})`}
+          fill={p.distance <= frame.distance ? "#ae7926" : "#3150a2"}
+          stroke="#fffaf0"
+          strokeWidth=".018"
+          opacity={p.distance <= frame.distance ? 0.9 : 0.72}
+        />
+      ))}
+    </g>
+  );
+}
 export type MapProps = {
   data: BuildingData;
   floor: Floor;
@@ -31,6 +57,7 @@ export type MapProps = {
   location: Location | null;
   avatar: number;
   onSelect: (selection: Selection) => void;
+  onWarning?: () => void;
 };
 
 export default function IndoorMap({
@@ -42,6 +69,7 @@ export default function IndoorMap({
   location,
   avatar,
   onSelect,
+  onWarning,
 }: MapProps) {
   const navigation = useRoutePlayback();
   const svg = useRef<SVGSVGElement>(null),
@@ -61,7 +89,7 @@ export default function IndoorMap({
   const destination = useRef({ zoom: 1, pan: { x: 0, y: 0 } });
   const cameraFrame = useRef(0);
   const moveCamera = useCallback(
-    (next: typeof camera.current, duration = 480) => {
+    (next: typeof camera.current, duration = 480, easing = easeCamera) => {
       cancelAnimationFrame(cameraFrame.current);
       destination.current = next;
       const from = camera.current,
@@ -69,7 +97,7 @@ export default function IndoorMap({
       const tick = (now: number) => {
         const t =
             reduced || !duration ? 1 : Math.min((now - start) / duration, 1),
-          k = easeCamera(t);
+          k = easing(t);
         const value = {
           zoom: from.zoom + (next.zoom - from.zoom) * k,
           pan: {
@@ -207,7 +235,10 @@ export default function IndoorMap({
         (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? rect.height : 1);
       const nextZoom = Math.max(
         0.55,
-        Math.min(12, from.zoom * Math.exp(-delta * 0.0015)),
+        Math.min(
+          12,
+          from.zoom * Math.exp(-Math.max(-0.3, Math.min(0.3, delta * 0.002))),
+        ),
       );
       const unit = Math.max(
         (b.width + padding * 2) / rect.width,
@@ -223,12 +254,17 @@ export default function IndoorMap({
             y: from.pan.y + dy * unit * (1 / from.zoom - 1 / nextZoom),
           },
         },
-        360,
+        180,
+        easeZoom,
       );
     };
     element.addEventListener("wheel", wheel, { passive: false });
     return () => element.removeEventListener("wheel", wheel);
   }, [b, padding, moveCamera, navigation.store]);
+  useEffect(() => {
+    if (state.route && !navigation.store.getFrame().follow)
+      moveCamera({ zoom: 1, pan: { x: 0, y: 0 } }, 260, easeZoom);
+  }, [state.route, moveCamera, navigation.store]);
   useEffect(() => {
     if (!selected || !["space", "asset"].includes(selected.kind)) return;
     const space =
@@ -372,12 +408,38 @@ export default function IndoorMap({
   const choose = (selection: Selection) => {
     if (!dragged.current) onSelect(selection);
   };
-  const path = route.map(([x, y], i) => `${i ? "L" : "M"}${x},${-y}`).join(" ");
+  const paths = state.route?.segments
+    ?.filter((s) => s.floor_id === floor.id)
+    .map((s) => s.points) ?? [route];
+  const path = paths
+    .map((points) =>
+      points.map(([x, y], i) => `${i ? "L" : "M"}${x},${-y}`).join(" "),
+    )
+    .join(" ");
+  const pins = warningPins(data, floor.id);
+  const previousPath =
+    state.comparePrevious && state.previousRoute
+      ? (
+          state.previousRoute.segments
+            ?.filter((s) => s.floor_id === floor.id)
+            .map((s) => s.points) ?? [routeOnFloor(state.previousRoute, floor)]
+        )
+          .map((points) =>
+            points.map(([x, y], i) => `${i ? "L" : "M"}${x},${-y}`).join(" "),
+          )
+          .join(" ")
+      : "";
   const locationPoint =
     location?.floorId === floor.id ? location.position : null;
 
   return (
     <div className="map-viewport" ref={wrapper}>
+      {state.comparePrevious && (
+        <div className="route-compare-legend">
+          <span>Previous route · no longer in use</span>
+          <span>Current route</span>
+        </div>
+      )}
       <svg
         ref={svg}
         className="indoor-svg"
@@ -567,6 +629,17 @@ export default function IndoorMap({
             ))}
           </g>
         )}
+        {previousPath && (
+          <path
+            d={previousPath}
+            fill="none"
+            stroke="#ad3048"
+            strokeWidth={3 * pixelUnit}
+            strokeDasharray={`${7 * pixelUnit} ${6 * pixelUnit}`}
+            opacity={0.65}
+            pointerEvents="none"
+          />
+        )}
         {layers.route && route.length > 1 && (
           <g pointerEvents="none">
             <path
@@ -582,7 +655,7 @@ export default function IndoorMap({
               d={path}
               fill="none"
               stroke="#284a96"
-              strokeWidth={3.5 * pixelUnit}
+              strokeWidth={1 * pixelUnit}
               strokeLinejoin="round"
               strokeLinecap="round"
               initial={{ pathLength: reduced ? 1 : 0 }}
@@ -593,7 +666,7 @@ export default function IndoorMap({
               d={path}
               fill="none"
               stroke="#aec6ff"
-              strokeWidth={1.2 * pixelUnit}
+              strokeWidth={0.6 * pixelUnit}
               strokeDasharray={`${2 * pixelUnit} ${9 * pixelUnit}`}
               className="route-flow"
             />
@@ -601,7 +674,7 @@ export default function IndoorMap({
               ref={completedTrail}
               fill="none"
               stroke="#c49b4f"
-              strokeWidth={4}
+              strokeWidth={1}
               vectorEffect="non-scaling-stroke"
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -625,8 +698,55 @@ export default function IndoorMap({
                 </text>
               </g>
             ))}
+            <RouteFootprints floorId={floor.id} />
           </g>
         )}
+        {pins.map((pin) => {
+          const blocked = pin.warnings.some((w) => w.blocks_route);
+          return (
+            <g
+              key={pin.id}
+              transform={`translate(${pin.point[0]},${-pin.point[1]})`}
+              role="button"
+              tabIndex={0}
+              aria-label={`Live warning: ${pin.warnings[0].label}. ${pin.warnings[0].message}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onWarning?.();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onWarning?.();
+                }
+              }}
+              className={`warning-map-pin ${blocked ? "blocking" : "caution"}`}
+            >
+              <title>{pin.warnings.map((w) => w.message).join(" · ")}</title>
+              <circle
+                className="warning-pin-pulse"
+                r={pixelUnit * 14}
+                fill="currentColor"
+                opacity=".15"
+              />
+              <circle
+                r={pixelUnit * 9}
+                fill="currentColor"
+                stroke="#fffbef"
+                strokeWidth={pixelUnit * 2}
+              />
+              <text
+                textAnchor="middle"
+                dominantBaseline="central"
+                fill="white"
+                fontSize={pixelUnit * 12}
+                fontWeight="800"
+              >
+                !
+              </text>
+            </g>
+          );
+        })}
         {locationPoint && (
           <g
             transform={`translate(${locationPoint[0]},${-locationPoint[1]})`}
@@ -718,10 +838,14 @@ export default function IndoorMap({
           aria-label="Zoom in"
           onClick={() => {
             navigation.store.setFollow(false);
-            moveCamera({
-              ...destination.current,
-              zoom: Math.min(12, destination.current.zoom * 1.4),
-            });
+            moveCamera(
+              {
+                ...destination.current,
+                zoom: Math.min(12, destination.current.zoom * 1.4),
+              },
+              200,
+              easeZoom,
+            );
           }}
         >
           <Plus size={17} />
@@ -730,10 +854,14 @@ export default function IndoorMap({
           aria-label="Zoom out"
           onClick={() => {
             navigation.store.setFollow(false);
-            moveCamera({
-              ...destination.current,
-              zoom: Math.max(0.55, destination.current.zoom / 1.4),
-            });
+            moveCamera(
+              {
+                ...destination.current,
+                zoom: Math.max(0.55, destination.current.zoom / 1.4),
+              },
+              200,
+              easeZoom,
+            );
           }}
         >
           <Minus size={17} />

@@ -1,9 +1,8 @@
 import { Component, memo, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { MeshGradient, PulsingBorder } from "@paper-design/shaders-react";
+import { PulsingBorder } from "@paper-design/shaders-react";
+import FlowField from "./FlowField";
 
-const ambient = ["#e5c99b", "#dce3f5", "#f3eadd", "#c9d4ed", "#e5bdc5"];
-const stage = ["#f5efdf", "#c8d5ee", "#eee3ca", "#e5c1c9", "#f8f2e5"];
 const aurora = ["#355cbb", "#b34c62", "#d4ad63", "#8b9fd7"];
 
 class ShaderBoundary extends Component<
@@ -19,8 +18,7 @@ class ShaderBoundary extends Component<
   }
 }
 
-/** Paper Shaders, also featured on 21st.dev. Small pixel budgets and built-in
- * visibility suspension keep ambient graphics secondary to the building model. */
+/** Plain WebGL flow field behind the page; Paper Shaders for the voice halo. */
 const ShaderSurface = memo(function ShaderSurface({
   kind = "ambient",
   enabled,
@@ -73,19 +71,7 @@ const ShaderSurface = memo(function ShaderSurface({
               maxPixelCount={160000}
             />
           ) : (
-            <MeshGradient
-              width="100%"
-              height="100%"
-              colors={kind === "stage" ? stage : ambient}
-              distortion={0.72}
-              swirl={0.32}
-              grainMixer={0}
-              grainOverlay={0.015}
-              speed={enabled ? (kind === "stage" ? 0.24 : 0.16) : 0}
-              frame={6500}
-              minPixelRatio={0.75}
-              maxPixelCount={kind === "stage" ? 260000 : 180000}
-            />
+            <FlowField enabled={enabled} />
           )}
         </ShaderBoundary>
       )}

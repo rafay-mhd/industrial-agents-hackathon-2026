@@ -1,5 +1,6 @@
 """Deterministic checks of conversational state and factual tool output; no model calls."""
 
+from copy import deepcopy
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -64,13 +65,19 @@ class ChatContextTests(unittest.TestCase):
 
     def test_multistop_output_has_core_leg_distances_and_one_complete_action(self):
         stops=['Tool cabinet H-A2-A','CNC mill H-A1-A']
+        expected=Building.load(FACTORY)
+        expected.route(START,DEST,via=stops)
+        geometry=expected.route_geometry()
         result=self.call('find_route',start=START,destination=DEST,via=stops)
         self.assertEqual(len(result['legs']),3)
         self.assertAlmostEqual(sum(l['length_m'] for l in result['legs']),result['length_m'],places=2)
         route_actions=[a for a in self.actions if a['type']=='route']
         self.assertEqual(len(route_actions),1)
         self.assertEqual(route_actions[0]['length_m'],result['length_m'])
-        self.assertEqual(route_actions[0]['floors'],self.building.route_geometry()['floors'])
+        self.assertTrue(route_actions[0]['geometry_valid'])
+        self.assertEqual(route_actions[0]['via_space_ids'],[self.building.resolve_space(s) for s in stops])
+        self.assertEqual(route_actions[0]['floors']['0'][0],geometry['floors']['0'][0])
+        self.assertEqual(route_actions[0]['floors']['1'][-1],geometry['floors']['1'][-1])
         self.assertEqual(self.building.last_route.start_space_id,self.building.resolve_space(START))
 
     def test_edit_impacts_use_core_and_invalidate_old_route_actions(self):
@@ -117,6 +124,22 @@ class ChatContextTests(unittest.TestCase):
         self.assertEqual(response.status_code,500)
         context=app.state.sessions[('proc-factory-dev-003','x')].agent.context
         self.assertEqual(context,ConversationContext())
+
+    def test_failed_turn_preserves_previous_route_geometry(self):
+        app=create_app(FACTORY,self.output,client_factory=Mock)
+        def ask(agent,message):
+            tools={t.name:t for t in agent.tools}
+            tools['find_route'].call(dict(start=START,destination=DEST if message=='route' else 'Toilet 0.22'))
+            if message=='fail':
+                raise RuntimeError('failed turn')
+            return 'Understood: Route\nFollow the highlighted route.'
+        with TestClient(app) as client,patch.object(BuildingAgent,'ask',ask):
+            path='/buildings/proc-factory-dev-003/chat'
+            self.assertEqual(client.post(path,json=dict(session_id='x',message='route')).status_code,200)
+            session=app.state.sessions[('proc-factory-dev-003','x')]
+            expected=deepcopy(session.agent.map.route_geometry())
+            self.assertEqual(client.post(path,json=dict(session_id='x',message='fail')).status_code,500)
+            self.assertEqual(session.agent.map.route_geometry(),expected)
 
 
 if __name__=='__main__':

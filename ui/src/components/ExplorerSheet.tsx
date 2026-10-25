@@ -1,9 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import {
   ArrowDownToLine,
   ArrowRight,
-  ArrowUpRight,
-  Camera,
   Check,
   DoorOpen,
   Layers3,
@@ -17,6 +15,7 @@ import type { BuildingData } from "../types";
 import { floorGeometry } from "../lib/model";
 import type { Layers } from "../lib/model";
 import { PixelPerson } from "./PixelPerson";
+import { PlanImport } from "./PlanImport";
 
 export type Sheet = "layers" | "import" | "source" | "profile" | null;
 type Props = {
@@ -28,7 +27,7 @@ type Props = {
   avatar: number;
   setAvatar: (value: number) => void;
   upload: (file: File) => Promise<void>;
-  notify: (message: string) => void;
+  onCreated: (data: BuildingData, warnings: string[]) => Promise<void>;
   notice: string;
 };
 export default function ExplorerSheet({
@@ -40,26 +39,16 @@ export default function ExplorerSheet({
   avatar,
   setAvatar,
   upload,
-  notify,
+  onCreated,
   notice,
 }: Props) {
   const dialog = useRef<HTMLDialogElement>(null),
-    jsonInput = useRef<HTMLInputElement>(null),
-    photoInput = useRef<HTMLInputElement>(null);
-  const [photo, setPhoto] = useState<{ url: string; name: string } | null>(
-    null,
-  );
+    jsonInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (panel && dialog.current && !dialog.current.open)
       dialog.current.showModal();
     if (!panel && dialog.current?.open) dialog.current.close();
   }, [panel]);
-  useEffect(
-    () => () => {
-      if (photo) URL.revokeObjectURL(photo.url);
-    },
-    [photo],
-  );
   const download = () => {
     if (!data) return;
     const url = URL.createObjectURL(
@@ -280,48 +269,10 @@ export default function ExplorerSheet({
                 <strong>Drop your building.json here</strong>
                 <span>or choose a file · up to 20 MB</span>
               </button>
-              <div className="camera-import">
-                <div>
-                  <Camera size={20} />
-                  <span>
-                    <strong>Start with a floor-plan photo</strong>
-                    <small>
-                      Capture or choose an image to prepare an import.
-                    </small>
-                  </span>
-                </div>
-                <button
-                  className="subtle-button"
-                  onClick={() => photoInput.current?.click()}
-                >
-                  Choose / take photo
-                  <ArrowUpRight size={14} />
-                </button>
-                {photo && (
-                  <div className="photo-preview">
-                    <img
-                      src={photo.url}
-                      alt={`Floor-plan photo: ${photo.name}`}
-                    />
-                    <button
-                      aria-label="Remove floor-plan photo"
-                      onClick={() => setPhoto(null)}
-                    >
-                      <X size={15} />
-                    </button>
-                  </div>
-                )}
-                <p className="fine-print">
-                  Photo-to-map conversion needs the Builder service, which isn’t
-                  connected yet. A photo alone cannot provide verified
-                  dimensions or a complete 3D building. Preview it here, then
-                  import the Builder’s JSON when ready.
-                </p>
-              </div>
+              <PlanImport onCreated={onCreated} />
               <p className="fine-print">
-                Local imports do not upload your file or register it with the
-                agent. To ask questions, register the building on the agent
-                server and choose it from the building list.
+                Building JSON imports register with the agent automatically, so
+                chat, voice and routing work on your new map.
               </p>
             </>
           )}
@@ -335,22 +286,6 @@ export default function ExplorerSheet({
         onChange={(e) => {
           const file = e.target.files?.[0];
           if (file) void upload(file);
-          e.target.value = "";
-        }}
-      />
-      <input
-        ref={photoInput}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        hidden
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) {
-            if (file.size > 20 * 1024 * 1024)
-              notify("Choose an image smaller than 20 MB.");
-            else setPhoto({ url: URL.createObjectURL(file), name: file.name });
-          }
           e.target.value = "";
         }}
       />

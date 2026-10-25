@@ -251,3 +251,63 @@ test("Invalid coordinates do not get removed and joined across a missing section
   assert.equal(p.legs[0].floorId, "lower");
   assert.match(p.notice, /coordinates/);
 });
+
+test("Ordered segments preserve an upstairs visit followed by returning to the starting floor", () => {
+  const roundTrip = {
+    ...route,
+    segments: [
+      {
+        floor_id: "lower",
+        points: [
+          [0, 0],
+          [5, 0],
+          [5, 5],
+        ],
+      },
+      {
+        floor_id: "upper",
+        points: [
+          [5, 5],
+          [8, 5],
+          [5, 5],
+        ],
+      },
+      {
+        floor_id: "lower",
+        points: [
+          [5, 5],
+          [5, 0],
+          [0, 0],
+        ],
+      },
+    ],
+  };
+  const plan = buildRoutePlan(building, roundTrip, location);
+  assert.equal(plan.complete, true);
+  assert.deepEqual(
+    plan.legs.filter((l) => l.kind === "walk").map((l) => l.floorId),
+    ["lower", "upper", "lower"],
+  );
+  assert.equal(plan.legs.filter((l) => l.kind === "connector").length, 2);
+});
+
+test("Unverified wall-crossing geometry is never offered as a walkthrough", () => {
+  const rejected = buildRoutePlan(
+    building,
+    {
+      ...route,
+      geometry_valid: false,
+      geometry_notice: "Door does not align with the room.",
+    },
+    null,
+  );
+  assert.equal(rejected.distance, 0);
+  assert.equal(rejected.complete, false);
+  assert.equal(rejected.verified, false);
+  assert.match(rejected.notice, /Door/);
+  assert.equal(buildRoutePlan(building, route, null).verified, false);
+  assert.equal(
+    buildRoutePlan(building, { ...route, geometry_valid: true }, null).verified,
+    true,
+  );
+});

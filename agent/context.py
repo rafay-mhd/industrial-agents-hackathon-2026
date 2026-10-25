@@ -7,3 +7,4 @@ from dataclasses import dataclass
 class ConversationContext:
     position: str | None = None
     step_free: bool = False
+    trip: dict | None = None

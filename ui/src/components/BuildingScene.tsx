@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { motion } from "motion/react";
 import {
   Box,
@@ -32,6 +32,35 @@ const modes = [
 export default function BuildingScene(props: MapProps) {
   const { data, floor, state, layers, selected, location, onSelect, avatar } =
     props;
+  const {
+    floors,
+    spaces,
+    openings: sourceOpenings,
+    vertical_connectors,
+    assets,
+  } = data;
+  const { id, name, source, units } = data.building;
+  const sceneData = useMemo(
+    () => ({
+      building: { id, name, source, units },
+      floors,
+      spaces,
+      openings: sourceOpenings,
+      vertical_connectors,
+      assets,
+    }),
+    [
+      id,
+      name,
+      source,
+      units,
+      floors,
+      spaces,
+      sourceOpenings,
+      vertical_connectors,
+      assets,
+    ],
+  );
   const navigation = useRoutePlayback(),
     navFrame = useRouteFrame();
   const host = useRef<HTMLDivElement>(null),
@@ -88,7 +117,7 @@ export default function BuildingScene(props: MapProps) {
       world.current = createBuildingWorld(
         host.current,
         labels.current,
-        data,
+        sceneData,
         state.doors,
         (s) => selectRef.current(s),
         () => {
@@ -107,10 +136,10 @@ export default function BuildingScene(props: MapProps) {
       world.current?.dispose();
       world.current = null;
     };
-  }, [data, state.doors, navigation.store]);
+  }, [sceneData, state.doors, navigation.store]);
   useEffect(() => {
     world.current?.bindNavigation(navigation.store, avatar);
-  }, [navigation.store, avatar, data, state.doors]);
+  }, [navigation.store, avatar, sceneData, state.doors]);
   useEffect(() => {
     if (selected && navigation.store.getFrame().active)
       navigation.store.setFollow(false);
@@ -147,7 +176,7 @@ export default function BuildingScene(props: MapProps) {
   const estimated = data.floors.some((f) => floorGeometry(f).estimated);
   return (
     <motion.div
-      className="scene-viewport"
+      className={`scene-viewport ${navFrame.active && navFrame.follow && navFrame.firstPerson ? "is-walking" : ""}`}
       data-presentation={displayMode}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}

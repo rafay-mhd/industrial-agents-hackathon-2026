@@ -25,6 +25,8 @@ export type Layers = {
 };
 export type MapState = {
   route: RouteAction | null;
+  previousRoute?: RouteAction | null;
+  comparePrevious?: boolean;
   spaces: string[];
   assets: string[];
   closed: string[];
@@ -53,11 +55,21 @@ export function applyMapActions(
   // Edits invalidate old routes, even when an empty closure set reopens a door.
   const next = {
     ...state,
-    route: actions.some((a) => a.type === "closed" || a.type === "door_added")
+    route: actions.some((a) =>
+      a.type === "building_state"
+        ? !a.preserve_route
+        : ["closed", "door_added", "route_unavailable"].includes(a.type),
+    )
       ? null
       : state.route,
   };
   for (const action of actions) {
+    if (action.type === "building_state") {
+      next.closed =
+        (action.building.building.closed_element_ids as string[] | undefined) ??
+        [];
+      if (action.geometry_changed !== false) next.doors = [];
+    }
     if (action.type === "closed") next.closed = [...action.element_ids];
     if (action.type === "highlight") {
       next.spaces = action.space_ids ?? [];
@@ -68,6 +80,10 @@ export function applyMapActions(
         ...next.doors.filter((d) => d.id !== action.opening.id),
         action.opening,
       ];
+  }
+  if (actions.some((a) => a.type === "route_update" && a.changed)) {
+    next.previousRoute = state.route ?? state.previousRoute;
+    next.comparePrevious = false;
   }
   // A route calculated in the same response already accounts for its edits.
   for (const action of actions)
