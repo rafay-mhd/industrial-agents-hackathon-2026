@@ -118,8 +118,8 @@ successful Builder call; restart persistence needs a configured data location co
   The fetched UI currently keeps old route geometry after a closure; a blocked-lift answer must not
   leave the earlier lift route highlighted. No new action type is required.
 - `POST /tts` now implements **ElevenLabs text-to-speech** using the existing request contract.
-  The main UI's microphone still uses browser speech recognition. Replace it with audio capture and
-  the new transcription endpoint, or link to `/voice` with the selected building/session. See VOICE.md.
+  The integrated main UI uses ElevenLabs realtime transcription and `/tts/stream`, with an explicitly
+  labelled recording fallback. `/voice` retains the original upload/review flow. See VOICE.md.
 
 ## Verification
 

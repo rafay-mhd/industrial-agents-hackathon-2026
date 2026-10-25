@@ -103,6 +103,15 @@ class VoiceProviderTests(unittest.TestCase):
             self.assertLessEqual(len(terms),100)
             self.assertLessEqual(sum(len(t.encode('utf-8')) for t in terms),3500)
             self.assertTrue(all(len(t)<50 for t in terms))
+            live=building_keyterms(json.loads(path.read_text()),max_terms=50,max_characters=20)
+            self.assertLessEqual(len(live),50)
+            self.assertTrue(all(len(t)<=20 for t in live))
+
+    def test_realtime_vocabulary_skips_long_names_without_losing_short_room_refs(self):
+        data={'assets':[{'name':'Fire extinguisher H-A1'}],
+              'spaces':[{'name':'An exceptionally long room name','ref':'1.20'}, {'name':'Office 1.20'}]}
+        self.assertIn('Fire extinguisher H-A1',building_keyterms(data))
+        self.assertEqual(building_keyterms(data,max_terms=50,max_characters=20),['1.20','Office 1.20'])
 
     def test_keyword_rejection_retries_only_transcription_once_without_hints(self):
         requests=[]
@@ -135,6 +144,7 @@ class VoiceAPITests(unittest.TestCase):
         self.assertEqual(response.status_code,200)
         self.assertEqual(response.json()['token'],'ephemeral-test-token')
         self.assertLessEqual(len(response.json()['keyterms']),50)
+        self.assertTrue(all(len(t)<=20 for t in response.json()['keyterms']))
         self.assertEqual(response.headers['cache-control'],'no-store')
         self.assertEqual(self.client.post('/buildings/missing/voice-token').status_code,404)
         self.voice.realtime_token.assert_called_once()

@@ -126,7 +126,9 @@ export async function realtimeMicrophone(
     min_speech_duration_ms: "160",
     filter_background_audio: "true",
   });
-  for (const word of result.keyterms.slice(0, 50))
+  for (const word of result.keyterms
+    .filter((term) => [...term].length <= 20)
+    .slice(0, 50))
     query.append("keyterms", word);
   const socket = new WebSocket(
     "wss://api.elevenlabs.io/v1/speech-to-text/realtime?" + query,
@@ -240,9 +242,12 @@ export async function realtimeMicrophone(
           callbacks.committed(event.text);
         else if (
           event.message_type?.includes("error") ||
-          ["quota_exceeded", "rate_limited", "auth_error"].includes(
-            event.message_type,
-          )
+          [
+            "quota_exceeded",
+            "rate_limited",
+            "auth_error",
+            "invalid_request",
+          ].includes(event.message_type)
         ) {
           fail(
             event.message_type === "quota_exceeded"

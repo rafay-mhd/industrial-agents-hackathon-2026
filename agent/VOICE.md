@@ -68,12 +68,10 @@ long replies are spoken in ordered chunks. The provider APIs are documented at
 [Create transcript](https://elevenlabs.io/docs/api-reference/speech-to-text/convert) and
 [Create speech](https://elevenlabs.io/docs/api-reference/text-to-speech/convert).
 
-The Interface branch inspected was `origin/ui` at `e192d43`. Its `/tts` request already matches this
-backend. Its microphone still uses `SpeechRecognition`, so the main UI does **not** yet use ElevenLabs
-input. The Interface owner can replace that capture with `MediaRecorder` → `/transcribe`, put the
-returned text in the editable chat input, then use its existing send/action-dispatch flow. Keep one
-backend origin and the existing session ID. Alternatively link to `/voice` with the query parameters
-above. This change stays in Agent-owned files; the teammate's UI was not edited.
+The integrated main UI now uses ElevenLabs realtime input and streamed output through the same
+BuildingAgent session and action-dispatch flow. If realtime connection setup fails, it explicitly
+labels its automatic MediaRecorder → `/transcribe` fallback. It does not use browser
+`SpeechRecognition`. The standalone page remains available with the query parameters above.
 
 Expected errors: 404 unknown building, 413 oversized audio, 415 unsupported audio type, 422 empty
 speech/invalid request, 429 provider limit, 503 missing/rejected credential, 502 provider failure,
@@ -113,10 +111,14 @@ the documented factory benchmark. See PROGRESS.md for evidence and remaining tea
 
 The combined app at `/` now supports realtime microphone PCM through ElevenLabs Scribe and incremental PCM playback through Eleven Flash. This is a transport upgrade around the existing Claude/Core agent; it does not create an ElevenLabs conversational agent. The older `/voice` page and its upload/transcribe/MP3 workflow are retained for compatibility.
 
-- `POST /buildings/{id}/voice-token`: validates the building, returns a single-use Scribe token plus at most 50 vocabulary hints. `Cache-Control: no-store`; never returns the main API key.
+- `POST /buildings/{id}/voice-token`: validates the building, returns a single-use Scribe token plus at most 50 vocabulary hints, each no longer than 20 characters. `Cache-Control: no-store`; never returns the main API key. Realtime has a stricter hint-length limit than batch transcription; long names are omitted from these optional hints while short room references remain available. The client also filters hints to protect against an older server.
 - `POST /tts/stream`: same `{text}` input as `/tts`; returns raw signed little-endian 16-bit mono PCM at 24 kHz, with `X-Audio-Sample-Rate: 24000`. Model: `eleven_flash_v2_5`. Provider failures are handled before streaming response headers.
 - `/voice/status` advertises `realtime` and `streaming` support. Existing non-streaming endpoints are unchanged.
 - AudioWorklet captures 100 ms PCM chunks; partial/committed transcripts are distinct. Client generation guards prevent late replies after interruption, building changes or stop. Network cancellation clears all queued audio nodes.
 - Realtime transport fallback is explicitly labelled. Quota errors are distinct from missing key permissions, including ElevenLabs' HTTP 401 `quota_exceeded` response.
 
-Streaming PCM scheduling, split byte boundaries, cancellation and server endpoints are covered by regression tests. The previous physical microphone → agent → speech test passed. The new live streaming provider test cannot complete until ElevenLabs speech credits are replenished (the account reported zero); do not treat the earlier test as proof of the upgraded streaming path.
+Streaming PCM scheduling, split byte boundaries, cancellation, invalid-request handling, token scope and realtime hint limits for all 280 supplied buildings are covered by regression tests. **120 backend and 87 UI tests** pass after the new-key verification on 25 October.
+
+The new key passes live token creation, batch transcription and the complete realtime chain: synthetic factory speech → partial transcripts → automatic VAD commit (“How large is Office 1.20?”) → our Claude/Core agent (**29.6 m²**) → streamed Eleven Flash PCM. The observed first transcript arrived at 2.56 s, commit at 3.77 s, and first output audio at 1.34 s after requesting TTS; 39 chunks contained 3.30 s of non-silent speech. A second realtime run on `swiss-5097` correctly recognized “bedroom -1.02 in apartment 1,” returned Core's **14.53 m²**, and streamed 33 non-silent output chunks. These are one-run observations, not latency guarantees. Evidence: ignored `agent_output/verification_20261025/voice_live/`.
+
+This check found and fixed the provider's `invalid_request` rejection of a 22-character building hint. After this fix, the user confirmed the physical browser test: “It transcribes live and speaks back correctly” for the factory question. This confirms the current microphone → live transcript → existing agent → speaker path in addition to the synthetic-audio tests.

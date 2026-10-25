@@ -19,7 +19,7 @@ AUDIO_TYPES = {'audio/webm', 'audio/ogg', 'audio/wav', 'audio/x-wav', 'audio/mpe
 DEFAULT_VOICE = 'JBFqnCBsd6RMkjVDRZzb'
 
 
-def building_keyterms(data: dict) -> list[str]:
+def building_keyterms(data: dict, *, max_terms=100, max_characters=49) -> list[str]:
     """Vocabulary comes from the selected building, including newly registered buildings."""
     groups = []
     for collection in ('vertical_connectors', 'assets', 'spaces', 'floors'):
@@ -30,7 +30,7 @@ def building_keyterms(data: dict) -> list[str]:
                     continue
                 term = re.sub(r'[<>{}\[\]\\]', '', value).strip()
                 # The provider counts words after punctuation normalization, including room decimals.
-                if term and len(term) < 50 and len(re.findall(r'\w+', term)) <= 5:
+                if term and len(term) <= max_characters and len(re.findall(r'\w+', term)) <= 5:
                     candidates.append(term)
         groups.append(candidates)
     terms, byte_count = [], 0
@@ -44,7 +44,7 @@ def building_keyterms(data: dict) -> list[str]:
             if byte_count + size > 3500:
                 continue
             terms.append(term); byte_count += size
-            if len(terms) == 100:
+            if len(terms) == max_terms:
                 return terms
     return terms
 
@@ -200,7 +200,8 @@ def install_voice(app, catalog, voice_factory=None):
     def token(building_id:str):
         data=catalog.get(building_id)
         return Response(content=json.dumps({'token':factory().realtime_token(),
-            'keyterms':building_keyterms(data)[:50]}),media_type='application/json',headers={'Cache-Control':'no-store'})
+            # Realtime Scribe rejects terms over 20 characters; batch STT permits longer hints.
+            'keyterms':building_keyterms(data,max_terms=50,max_characters=20)}),media_type='application/json',headers={'Cache-Control':'no-store'})
 
     @app.post('/tts/stream')
     def tts_stream(request:SpeechRequest):
