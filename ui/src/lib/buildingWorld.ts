@@ -271,6 +271,14 @@ export function createBuildingWorld(
     const seen = new Set<string>(),
       batches = new Map<string, THREE.BufferGeometry[]>();
     for (const space of data.spaces.filter((s) => s.floor_id === floor.id)) {
+      // Display height for this room's walls and ceiling (LOOK.roomWallCap_m); halls keep the floor height.
+      const wallHeight =
+        LOOK.fullHeightWalls &&
+        LOOK.roomWallCap_m > 0 &&
+        space.type !== "hall" &&
+        space.type !== "outdoor"
+          ? Math.min(height, LOOK.roomWallCap_m)
+          : height;
       const style = palette(space),
         color = new THREE.Color(style.solid);
       const shape = new THREE.Shape(
@@ -302,7 +310,9 @@ export function createBuildingWorld(
         edgeMaterial,
       );
       slab.add(edges);
-      const roofMaterial = material(color);
+      const roofMaterial = material(
+        LOOK.ceilings && LOOK.neutralCeilings ? LOOK.ceilingColor : color,
+      );
       let roof: THREE.Mesh | null = null;
       if (space.type !== "outdoor") {
         const roofGeometry = voids.has(space.id)
@@ -316,7 +326,7 @@ export function createBuildingWorld(
             )
           : geom;
         roof = new THREE.Mesh(roofGeometry, roofMaterial);
-        roof.position.y = height - 0.16;
+        roof.position.y = wallHeight - 0.16;
         roof.receiveShadow = true;
         roof.castShadow = !LOOK.ceilings;
         if (LOOK.ceilings) roof.raycast = () => {};
@@ -342,11 +352,11 @@ export function createBuildingWorld(
             dy = segment.b[1] - segment.a[1],
             length = Math.hypot(dx, dy);
           if (length < 0.001) continue;
-          const wall = new THREE.BoxGeometry(length, height, 0.1);
+          const wall = new THREE.BoxGeometry(length, wallHeight, 0.1);
           wall.rotateY(Math.atan2(dy, dx));
           wall.translate(
             (segment.a[0] + segment.b[0]) / 2,
-            height / 2,
+            wallHeight / 2,
             -(segment.a[1] + segment.b[1]) / 2,
           );
           wall.userData.spaceId = space.id;

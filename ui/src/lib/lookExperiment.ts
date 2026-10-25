@@ -10,8 +10,14 @@ export const LOOK = {
   ceilings: true,
   /** The exterior shell drawn translucent around the interior so upper floors do not float. */
   ghostEnvelope: true,
-  ceilingOpacity: 0.18,
-  envelopeOpacity: 0.12,
+  /** Ordinary rooms (not halls or outdoor spaces) get at most this wall height even on a tall floor;
+   * factory ground floors are 8 m because of the hall, and offices on them would inherit that. 0 = off. */
+  roomWallCap_m: 3.2,
+  /** Ceilings in one pale neutral instead of each room's colour. */
+  neutralCeilings: true,
+  ceilingColor: "#f3efe8",
+  ceilingOpacity: 0.08,
+  envelopeOpacity: 0.06,
 };
 
 /** Per-second approach rate for accumulated wheel zoom; higher = snappier, lower = floatier. */
