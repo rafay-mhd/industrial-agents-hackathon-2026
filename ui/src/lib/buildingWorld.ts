@@ -29,6 +29,7 @@ import { createFootsteps } from "./footsteps";
 import { buildEnvelope, isOutdoor } from "./envelopeLayout";
 import { createExteriorScene } from "./exteriorScene";
 import { wallSegments } from "./model";
+import { LOOK, ZOOM_SMOOTHING, wheelZoomStep } from "./lookExperiment";
 
 export type SceneMode = "building" | "connected" | "floors" | "inside";
 export type SceneOptions = Pick<
@@ -316,7 +317,9 @@ export function createBuildingWorld(
           : geom;
         roof = new THREE.Mesh(roofGeometry, roofMaterial);
         roof.position.y = height - 0.16;
-        roof.castShadow = roof.receiveShadow = true;
+        roof.receiveShadow = true;
+        roof.castShadow = !LOOK.ceilings;
+        if (LOOK.ceilings) roof.raycast = () => {};
         roof.userData = slab.userData;
         roof.add(
           new THREE.LineSegments(
@@ -828,6 +831,22 @@ export function createBuildingWorld(
       easeZoom,
     );
   };
+  // Wheel zoom is accumulated here and eased in the render loop, so a trackpad burst of events
+  // becomes one smooth motion instead of many restarted flights.
+  let pendingZoom = 0,
+    zoomAnchor: THREE.Vector3 | null = null;
+  const applyZoom = (factor: number, anchor: THREE.Vector3 | null) => {
+    const target = controls.target,
+      delta = camera.position.clone().sub(target),
+      distance = THREE.MathUtils.clamp(
+        delta.length() * factor,
+        controls.minDistance,
+        controls.maxDistance,
+      );
+    if (anchor && factor < 1) target.lerp(anchor, Math.min(0.3, 1 - factor));
+    overview = false;
+    camera.position.copy(target).add(delta.normalize().multiplyScalar(distance));
+  };
   const observer = new ResizeObserver(([entry]) => {
     width = entry.contentRect.width;
     height = entry.contentRect.height;
@@ -960,12 +979,13 @@ export function createBuildingWorld(
       new THREE.Plane(new THREE.Vector3(0, 1, 0), -controls.target.y),
       anchor,
     );
-    const delta =
-      e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? height : 1);
-    zoom(
-      Math.exp(THREE.MathUtils.clamp(delta * 0.002, -0.3, 0.3)),
-      hit ?? undefined,
+    if (flight) flight = null;
+    pendingZoom = THREE.MathUtils.clamp(
+      pendingZoom + wheelZoomStep(e, height),
+      -1.2,
+      1.2,
     );
+    zoomAnchor = hit ? anchor.clone() : null;
   };
   const lost = (e: Event) => {
     e.preventDefault();
@@ -1177,7 +1197,7 @@ export function createBuildingWorld(
       const blend = reduced.matches ? 1 : 1 - Math.exp(-dt * 7);
       roofOpacity = THREE.MathUtils.lerp(
         roofOpacity,
-        options.mode === "building" ? 1 : 0,
+        options.mode === "building" ? 1 : LOOK.ceilings ? LOOK.ceilingOpacity : 0,
         blend,
       );
       roofEdgeMaterial.opacity = roofOpacity * 0.65;
@@ -1201,6 +1221,7 @@ export function createBuildingWorld(
         );
         const wallScale =
           options.mode === "building" ||
+          LOOK.fullHeightWalls ||
           (navigation?.getFrame().firstPerson && navigation.getFrame().follow)
             ? 1
             : Math.min(
@@ -1212,7 +1233,7 @@ export function createBuildingWorld(
           wallScale,
           blend,
         );
-        g.roofs.visible = false;
+        g.roofs.visible = LOOK.ceilings && options.mode !== "building";
         g.overlays.visible = options.mode !== "building";
         g.assets.group.visible = options.mode !== "building";
       }
@@ -1366,6 +1387,14 @@ export function createBuildingWorld(
         camera.position.lerpVectors(flight.from, flight.to, k);
         controls.target.lerpVectors(flight.fromTarget, flight.toTarget, k);
         if (t === 1) flight = null;
+      }
+      if (pendingZoom !== 0) {
+        const step =
+          Math.abs(pendingZoom) < 1e-4
+            ? pendingZoom
+            : pendingZoom * (1 - Math.exp(-dt * ZOOM_SMOOTHING));
+        applyZoom(Math.exp(step), zoomAnchor);
+        pendingZoom = Math.abs(pendingZoom - step) < 1e-4 ? 0 : pendingZoom - step;
       }
       controls.autoRotate = options.orbit && !reduced.matches;
       if (!eyeView) controls.update(dt);

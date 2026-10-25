@@ -4,6 +4,14 @@ One entry per test run, newest first. Every entry names the commit it was run on
 numbers, and every miss with its cause. Add an entry whenever Core, Agent prompts or tools change, and after
 each dev run before a new submission CSV.
 
+## 2026-10-25 — merge current work and teammate zoom update before voice verification
+
+Combined local `01f7a9b` (adaptive navigation, accessibility/equipment reports, warning UI and resolution fixes) with remote `c3912a2` (smoother 2D/3D zoom; optional look switches off). Automatic merge preserved both sides.
+
+Commands: `npm --prefix ui run build`, `npm --prefix ui run lint`, `npm --prefix ui test`; `MPLCONFIGDIR=/private/tmp/inside-mpl uv run --frozen --cache-dir /private/tmp/inside-uv-cache python -m core.oracle_check data/dev`; the same UV prefix with `--env-file .env python -m agent.benchmark data/dev/proc-factory-dev-003 data/dev/proc-factory-dev-003/questions.jsonl --no-kind-hints --model claude-sonnet-5-5 --out agent_output/verification_20261025/pre_voice_merge/factory.csv`; `git diff --check`.
+
+Build/lint, **84 UI tests**, Core dev **138/138**, and the required live factory check **5/5** passed on the combined tree. Existing lazy Three.js chunk warning remains. No keys or generated verification artifacts are included in Git. Voice verification follows the user's requested initial push.
+
 ## 2026-10-25 — resolve unavailable equipment and retain resolved history
 
 Working tree based on `main` at `5b3b8a5`, preserving the earlier uncommitted changes. Deterministic route-intent restoration and warning resolution changed; no model prompt, official scoring, Core, starter or source-data edits in this step.

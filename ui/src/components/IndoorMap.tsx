@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState, useEffect, useCallback } from "react";
+import { wheelZoomStep } from "../lib/lookExperiment";
 import { motion, useReducedMotion } from "motion/react";
 import { LocateFixed, Minus, Plus, Compass } from "lucide-react";
 import type { BuildingData, Floor } from "../types";
@@ -230,15 +231,9 @@ export default function IndoorMap({
       navigation.store.setFollow(false);
       const from = destination.current,
         rect = element.getBoundingClientRect();
-      const delta =
-        event.deltaY *
-        (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? rect.height : 1);
       const nextZoom = Math.max(
         0.55,
-        Math.min(
-          12,
-          from.zoom * Math.exp(-Math.max(-0.3, Math.min(0.3, delta * 0.002))),
-        ),
+        Math.min(12, from.zoom * Math.exp(-wheelZoomStep(event, rect.height))),
       );
       const unit = Math.max(
         (b.width + padding * 2) / rect.width,

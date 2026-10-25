@@ -11,6 +11,7 @@ import { boundsOf, interiorPoint } from "./model.ts";
 import { exteriorTexture } from "./exteriorMaterials.ts";
 import { roofGeometry } from "./roofGeometry.ts";
 import type { Selection } from "../components/IndoorMap";
+import { LOOK } from "./lookExperiment.ts";
 export function createExteriorScene(
   layout: BuildingEnvelope,
   labelHost: HTMLDivElement,
@@ -73,6 +74,42 @@ export function createExteriorScene(
       depthWrite: false,
     }),
   );
+  // Ghost envelope: the shell drawn translucent around the interior modes (LOOK.ghostEnvelope).
+  const ghostMaterial = keep(
+    new THREE.MeshStandardMaterial({
+      color: "#e4e9ef",
+      transparent: true,
+      opacity: LOOK.envelopeOpacity,
+      roughness: 0.9,
+      metalness: 0,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    }),
+  );
+  let ghosted = false;
+  const noRaycast = () => {};
+  const setGhost = (ghost: boolean) => {
+    if (ghost === ghosted) return;
+    ghosted = ghost;
+    shell.traverse((object) => {
+      if (object instanceof THREE.Mesh) {
+        if (ghost) {
+          object.userData.solidMaterial = object.material;
+          object.userData.solidCastShadow = object.castShadow;
+          object.userData.solidRaycast = object.raycast;
+          object.material = ghostMaterial;
+          object.castShadow = false;
+          object.raycast = noRaycast;
+        } else {
+          object.material = object.userData.solidMaterial ?? object.material;
+          object.castShadow = object.userData.solidCastShadow ?? object.castShadow;
+          object.raycast = object.userData.solidRaycast ?? object.raycast;
+        }
+      } else if (object instanceof THREE.LineSegments) {
+        object.visible = !ghost;
+      }
+    });
+  };
   const picks: THREE.Object3D[] = [],
     batches = new Map<THREE.Material, THREE.BufferGeometry[]>();
   const add = (geo: THREE.BufferGeometry, m: THREE.Material) => {
@@ -588,7 +625,11 @@ export function createExteriorScene(
     ) {
       mode = nextMode;
       selected = selection;
-      shell.visible = site.visible = mode === "building";
+      const ghost =
+        LOOK.ghostEnvelope && mode !== "building" && mode !== "floors";
+      setGhost(ghost);
+      shell.visible = mode === "building" || ghost;
+      site.visible = mode === "building";
       for (const feature of features) {
         feature.group.visible =
           (mode !== "inside" || feature.floorId === floorId) &&
